@@ -98,15 +98,14 @@ static void mainLoop_hook(GameWorld* self, float time)
 
     // Compute frame timings
     __int64 frameTotal = s_current.frameEnd - s_current.frameStart;
-    // charsUpdate is inlined and Character::update can't be safely hooked.
-    // Estimate: total frame time minus known measured overheads.
-    __int64 measuredOverhead = killList + sysMsg + daily;
-    __int64 charsTotal = frameTotal - measuredOverhead; // approximate - includes rendering too
     __int64 charsUTTotal = s_current.charsUpdateUT_end - s_current.charsUpdateUT_start;
     __int64 sysMsg = s_current.processSysMessages_end - s_current.processSysMessages_start;
     __int64 killList = s_current.processKillList_end - s_current.processKillList_start;
     __int64 daily = s_current.dailyUpdatesRan
         ? (s_current.dailyUpdates_end - s_current.dailyUpdates_start) : 0;
+    // charsUpdate is inlined and Character::update can't be safely hooked.
+    // Estimate: total frame time minus known measured overheads.
+    __int64 charsTotal = frameTotal - (killList + sysMsg + daily);
 
     float totalMs = (float)TicksToMs(frameTotal);
     float charsMs = (float)TicksToMs(charsTotal);
