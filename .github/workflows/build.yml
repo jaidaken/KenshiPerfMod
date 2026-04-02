@@ -115,8 +115,10 @@ jobs:
         env:
           BOOST_INCLUDE_PATH: C:\boost_1_60_0
         run: |
-          call "C:\Program Files\Microsoft SDKs\Windows\v7.1\Bin\SetEnv.cmd" /x64 /Release 2>nul
-          msbuild KenshiPerfMod.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+          :: Use VS2022's MSBuild (knows how to find C++ props) but with the v100 toolset
+          :: SetEnv.cmd clobbers VCTargetsPath which breaks VS2022 MSBuild, so we don't call it.
+          :: The Windows7.1SDK platform toolset registered via GAC handles compiler discovery.
+          "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe" KenshiPerfMod.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:normal
 
       # --- Package ---
 
