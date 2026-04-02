@@ -17,6 +17,9 @@ namespace Profiling
     // Returns true if profiling is active.
     bool IsEnabled();
 
+    // Write summary report (called periodically and on shutdown).
+    void WriteSummary();
+
     // Manual timing API for custom measurements.
     // Returns a high-resolution timestamp.
     __int64 GetTimestamp();
