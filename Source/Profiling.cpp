@@ -98,8 +98,10 @@ static void mainLoop_hook(GameWorld* self, float time)
 
     // Compute frame timings
     __int64 frameTotal = s_current.frameEnd - s_current.frameStart;
-    // Use accumulated Character::update() time (charsUpdate hook doesn't fire - likely inlined)
-    __int64 charsTotal = s_charUpdateAccum;
+    // charsUpdate is inlined and Character::update can't be safely hooked.
+    // Estimate: total frame time minus known measured overheads.
+    __int64 measuredOverhead = killList + sysMsg + daily;
+    __int64 charsTotal = frameTotal - measuredOverhead; // approximate - includes rendering too
     __int64 charsUTTotal = s_current.charsUpdateUT_end - s_current.charsUpdateUT_start;
     __int64 sysMsg = s_current.processSysMessages_end - s_current.processSysMessages_start;
     __int64 killList = s_current.processKillList_end - s_current.processKillList_start;
@@ -113,8 +115,10 @@ static void mainLoop_hook(GameWorld* self, float time)
     float killListMs = (float)TicksToMs(killList);
     float dailyMs = (float)TicksToMs(daily);
 
-    // Character count from our hook (more accurate than the update list size)
-    int charCount = s_charUpdateCount;
+    // Character count from GameWorld (Character::update hook is unsafe)
+    int charCount = 0;
+    if (ou && ou->initialized)
+        charCount = (int)ou->getCharacterUpdateList().size();
 
     // Write frame data to CSV
     if (s_csvFile.is_open())
@@ -356,21 +360,12 @@ void Profiling::InstallHooks()
         status == KenshiLib::SUCCESS ? "OK" : "FAIL",
         KenshiLib::GetRealAddress(&GameWorld::dailyUpdates));
 
-    // Get actual game exe base address from Windows
-    HMODULE gameModule = GetModuleHandleA("kenshi_x64.exe");
-    if (!gameModule)
-        gameModule = GetModuleHandleA("kenshi_GOG_x64.exe");
-    intptr_t gameBase = (intptr_t)gameModule;
-    PerfLog::InfoF("Game exe base: 0x%llX", gameBase);
-
-    // Character::update() RVA = 0x5CE9B0 (from Character.h)
-    intptr_t charUpdateAddr = gameBase + 0x5CE9B0;
-    PerfLog::InfoF("Character::update target: 0x%llX", charUpdateAddr);
-
-    status = KenshiLib::AddHook(
-        (void*)charUpdateAddr,
-        (void*)charUpdate_hook, (void**)&charUpdate_orig);
-    PerfLog::InfoF("Hook Character::update: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
+    // NOTE: Character::update() cannot be safely hooked:
+    // - _NV_ variants resolve to trampolines (wrong address)
+    // - Direct RVA hooking crashes (prologue too short or instruction alignment issue)
+    // Instead we measure character update time by subtracting known costs from total frame time.
+    // char_count is read from GameWorld::getCharacterUpdateList().
+    PerfLog::Info("Character::update hook skipped (unsafe). Using frame subtraction method.");
 
     DebugLog("[KenshiPerfMod] Profiling hooks installed");
 }
