@@ -66,6 +66,12 @@ static void mainLoop_hook(GameWorld* self, float time)
     QueryPerformanceCounter(&start);
     s_current.frameStart = start.QuadPart;
     s_current.dailyUpdatesRan = false;
+    // Reset sub-timings so stale values are obvious (show as 0)
+    s_current.charsUpdate_start = s_current.charsUpdate_end = start.QuadPart;
+    s_current.charsUpdateUT_start = s_current.charsUpdateUT_end = start.QuadPart;
+    s_current.processSysMessages_start = s_current.processSysMessages_end = start.QuadPart;
+    s_current.processKillList_start = s_current.processKillList_end = start.QuadPart;
+    s_current.dailyUpdates_start = s_current.dailyUpdates_end = start.QuadPart;
 
     mainLoop_orig(self, time);
 
@@ -289,32 +295,49 @@ void Profiling::InstallHooks()
     if (!s_enabled)
         return;
 
-    // mainLoop_GPUSensitiveStuff is virtual - GetRealAddress doesn't work for virtuals.
-    // Use the non-virtual _NV_ variant which has the same RVA but is a regular function.
-    KenshiLib::AddHook(
+    KenshiLib::HookStatus status;
+
+    status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff),
         (void*)mainLoop_hook, (void**)&mainLoop_orig);
+    PerfLog::InfoF("Hook mainLoop_GPUSensitiveStuff: %s (addr=0x%llX)",
+        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
+        KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff));
 
-    // These are all non-virtual, use GetRealAddress
-    KenshiLib::AddHook(
+    status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::charsUpdate),
         (void*)charsUpdate_hook, (void**)&charsUpdate_orig);
+    PerfLog::InfoF("Hook charsUpdate: %s (addr=0x%llX)",
+        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
+        KenshiLib::GetRealAddress(&GameWorld::charsUpdate));
 
-    KenshiLib::AddHook(
+    status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::charsUpdateUT),
         (void*)charsUpdateUT_hook, (void**)&charsUpdateUT_orig);
+    PerfLog::InfoF("Hook charsUpdateUT: %s (addr=0x%llX)",
+        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
+        KenshiLib::GetRealAddress(&GameWorld::charsUpdateUT));
 
-    KenshiLib::AddHook(
+    status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::processSysMessages),
         (void*)processSysMessages_hook, (void**)&processSysMessages_orig);
+    PerfLog::InfoF("Hook processSysMessages: %s (addr=0x%llX)",
+        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
+        KenshiLib::GetRealAddress(&GameWorld::processSysMessages));
 
-    KenshiLib::AddHook(
+    status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::processKillList),
         (void*)processKillList_hook, (void**)&processKillList_orig);
+    PerfLog::InfoF("Hook processKillList: %s (addr=0x%llX)",
+        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
+        KenshiLib::GetRealAddress(&GameWorld::processKillList));
 
-    KenshiLib::AddHook(
+    status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::dailyUpdates),
         (void*)dailyUpdates_hook, (void**)&dailyUpdates_orig);
+    PerfLog::InfoF("Hook dailyUpdates: %s (addr=0x%llX)",
+        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
+        KenshiLib::GetRealAddress(&GameWorld::dailyUpdates));
 
     DebugLog("[KenshiPerfMod] Profiling hooks installed");
 }
