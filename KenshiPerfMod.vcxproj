@@ -50,7 +50,7 @@
     <IntDir>$(ProjectDir)x64\$(Configuration)\obj\</IntDir>
     <TargetName>KenshiPerfMod</TargetName>
     <TargetExt>.dll</TargetExt>
-    <IncludePath>Source;$(BOOST_INCLUDE_PATH);$(ProjectDir)KenshiLib\Include;$(ProjectDir)KenshiLib\Include\ogre;$(ProjectDir)thirdparty\rapidjson\include;$(VCInstallDir)include;$(WindowsSdkDir)Include;$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
+    <IncludePath>Source;$(BOOST_INCLUDE_PATH);$(ProjectDir)KenshiLib\Include;$(ProjectDir)KenshiLib\Include\ogre;$(ProjectDir)KenshiLib\Include\mygui;$(ProjectDir)thirdparty\rapidjson\include;$(VCInstallDir)include;$(WindowsSdkDir)Include;$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
     <LibraryPath>$(BOOST_INCLUDE_PATH)\stage\lib;$(ProjectDir)Libraries;$(ProjectDir)KenshiLib\Libraries\ogre;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <!-- Release x64 -->
@@ -60,7 +60,7 @@
     <IntDir>$(ProjectDir)x64\$(Configuration)\obj\</IntDir>
     <TargetName>KenshiPerfMod</TargetName>
     <TargetExt>.dll</TargetExt>
-    <IncludePath>Source;$(BOOST_INCLUDE_PATH);$(ProjectDir)KenshiLib\Include;$(ProjectDir)KenshiLib\Include\ogre;$(ProjectDir)thirdparty\rapidjson\include;$(VCInstallDir)include;$(WindowsSdkDir)Include;$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
+    <IncludePath>Source;$(BOOST_INCLUDE_PATH);$(ProjectDir)KenshiLib\Include;$(ProjectDir)KenshiLib\Include\ogre;$(ProjectDir)KenshiLib\Include\mygui;$(ProjectDir)thirdparty\rapidjson\include;$(VCInstallDir)include;$(WindowsSdkDir)Include;$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
     <LibraryPath>$(BOOST_INCLUDE_PATH)\stage\lib;$(ProjectDir)Libraries;$(ProjectDir)KenshiLib\Libraries\ogre;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <!-- Debug x64 compile/link -->
@@ -101,13 +101,15 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
-      <AdditionalDependencies>KenshiLib.lib;OgreMain_x64.lib;libboost_system-vc100-mt-1_60.lib;libboost_thread-vc100-mt-1_60.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(BOOST_INCLUDE_PATH)\stage\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>KenshiLib.lib;OgreMain_x64.lib;MyGUIEngine_x64.lib;libboost_system-vc100-mt-1_60.lib;libboost_thread-vc100-mt-1_60.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(BOOST_INCLUDE_PATH)\stage\lib;$(ProjectDir)KenshiLib\Libraries\mygui;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <!-- Source files -->
   <ItemGroup>
     <ClCompile Include="Source\dllmain.cpp" />
+    <ClCompile Include="Source\Log.cpp" />
+    <ClCompile Include="Source\Overlay.cpp" />
     <ClCompile Include="Source\Settings.cpp" />
     <ClCompile Include="Source\ThreadPool.cpp" />
     <ClCompile Include="Source\TLSMessageQueue.cpp" />
@@ -115,6 +117,8 @@
   </ItemGroup>
   <!-- Header files -->
   <ItemGroup>
+    <ClInclude Include="Source\Log.h" />
+    <ClInclude Include="Source\Overlay.h" />
     <ClInclude Include="Source\Settings.h" />
     <ClInclude Include="Source\ThreadPool.h" />
     <ClInclude Include="Source\TLSMessageQueue.h" />
