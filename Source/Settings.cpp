@@ -111,8 +111,8 @@ std::string PerfSettings::GetProfileOutputPath()  { return GetString("ProfileOut
 int PerfSettings::GetWorkerThreadCount()          { return GetInt("WorkerThreadCount", 0); }
 
 // Phase 1
-bool PerfSettings::GetEnableSpatialGrid()         { return GetBool("EnableSpatialGrid", true); }
-float PerfSettings::GetGridCellSize()             { return GetFloat("GridCellSize", 200.0f); }
+bool PerfSettings::GetEnableSpawnThrottling()     { return GetBool("EnableSpawnThrottling", true); }
+int PerfSettings::GetMaxSpawnsPerFrame()          { return GetInt("MaxSpawnsPerFrame", 30); }
 
 // Phase 2
 bool PerfSettings::GetEnableSimulationLOD()       { return GetBool("EnableSimulationLOD", true); }
