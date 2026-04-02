@@ -12,14 +12,14 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
       # --- Windows 7.1 SDK / VC++ 2010 toolset ---
 
       - name: Cache W7SDK
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-w7sdk
         with:
           path: W7SDK-v1.zip
@@ -54,7 +54,7 @@ jobs:
       # --- Boost 1.60.0 ---
 
       - name: Cache Boost 1.60.0
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-boost
         with:
           path: C:\boost_1_60_0
@@ -90,7 +90,7 @@ jobs:
       # --- KenshiLib.lib (prebuilt from release) ---
 
       - name: Cache KenshiLib.lib
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-kenshilib
         with:
           path: Libraries/KenshiLib.lib
@@ -145,7 +145,7 @@ jobs:
           Get-ChildItem $outDir
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: KenshiPerfMod
           path: KenshiPerfMod-release/
