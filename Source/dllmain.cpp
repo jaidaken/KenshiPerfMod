@@ -1,7 +1,9 @@
+#include "Log.h"
 #include "Settings.h"
 #include "ThreadPool.h"
 #include "TLSMessageQueue.h"
 #include "Profiling.h"
+#include "Overlay.h"
 
 #include <kenshi/Kenshi.h>
 #include <kenshi/GameWorld.h>
@@ -17,16 +19,27 @@
 // RE_Kenshi looks up the C++ mangled name ?startPlugin@@YAXXZ via GetProcAddress.
 __declspec(dllexport) void startPlugin()
 {
+    // Start our own log first
+    PerfLog::Init();
+    PerfLog::Info("KenshiPerfMod starting");
     DebugLog("[KenshiPerfMod] Starting KenshiPerfMod");
 
     // Load configuration
     PerfSettings::Init();
 
+    // Log system info
+    SYSTEM_INFO sysInfo;
+    GetSystemInfo(&sysInfo);
+    PerfLog::InfoF("System: %d logical processors", sysInfo.dwNumberOfProcessors);
+    PerfLog::InfoF("KenshiLib version: %s", KenshiLib::GetKenshiVersion().ToString().c_str());
+
     // Initialize TLS slots for message queues (needed before any hooks run)
     TLSQueues::Init();
+    PerfLog::Info("TLS message queues initialized");
 
     // Start thread pool
     int workers = PerfThreadPool::Init(PerfSettings::GetWorkerThreadCount());
+    PerfLog::InfoF("Thread pool started: %d workers", workers);
     DebugLog("[KenshiPerfMod] Thread pool: " + std::to_string((long long)workers) + " workers");
 
     // Initialize and install profiler hooks
@@ -34,7 +47,28 @@ __declspec(dllexport) void startPlugin()
     if (Profiling::IsEnabled())
     {
         Profiling::InstallHooks();
+        PerfLog::Info("Profiling hooks installed");
     }
+    else
+    {
+        PerfLog::Info("Profiling disabled");
+    }
+
+    // Log enabled features
+    PerfLog::InfoF("Features: SpatialGrid=%s SimLOD=%s ParallelThreaded=%s ParallelChar=%s DailySpreading=%s",
+        PerfSettings::GetEnableSpatialGrid() ? "on" : "off",
+        PerfSettings::GetEnableSimulationLOD() ? "on" : "off",
+        PerfSettings::GetEnableParallelThreadedUpdates() ? "on" : "off",
+        PerfSettings::GetEnableParallelCharUpdate() ? "on" : "off",
+        PerfSettings::GetEnableDailyUpdateSpreading() ? "on" : "off");
+    PerfLog::InfoF("Features: ParallelBuildings=%s ModLoadOpt=%s PathIntern=%s OgreAnimThread=%s",
+        PerfSettings::GetEnableParallelBuildings() ? "on" : "off",
+        PerfSettings::GetEnableModLoadOptimizer() ? "on" : "off",
+        PerfSettings::GetEnablePathInterning() ? "on" : "off",
+        PerfSettings::GetEnableOgreAnimThreading() ? "on" : "off");
+
+    // Initialize overlay (hooks MainBarGUI constructor, creates widget when in-game)
+    PerfOverlay::Init();
 
     // TODO Phase 1: SpatialGrid::Init()
     // TODO Phase 2: SimulationLOD::Init()
@@ -45,5 +79,6 @@ __declspec(dllexport) void startPlugin()
     // TODO Phase 7: ModLoadOptimizer::Init()
     // TODO Phase 8: OgreAnimThreading::Init()
 
+    PerfLog::Info("Initialization complete");
     DebugLog("[KenshiPerfMod] Initialization complete");
 }
