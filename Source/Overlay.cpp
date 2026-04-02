@@ -67,7 +67,9 @@ void PerfOverlay::Init()
     PerfLog::Info("Overlay will be created on first update");
 }
 
-void PerfOverlay::Update(float totalMs, float gameLogicMs, float spatialMs, float spatialCount, float killListMs, float unused, int charCount)
+void PerfOverlay::Update(float totalMs, float gameLogicMs, float spatialMs, float spatialCount,
+    float killListMs, float charsSpawned, int charCount, float gameSpeed,
+    int platoonsActivated, int terrainLoads)
 {
     // Lazy init
     if (!s_initialized && !s_createFailed)
@@ -78,32 +80,34 @@ void PerfOverlay::Update(float totalMs, float gameLogicMs, float spatialMs, floa
 
     // Update rolling average
     s_totalHistory[s_historyIdx] = totalMs;
-    s_charsHistory[s_historyIdx] = spatialMs;
+    s_charsHistory[s_historyIdx] = gameLogicMs;
     s_historyIdx = (s_historyIdx + 1) % AVG_FRAMES;
 
-    float avgTotal = 0, avgSpatial = 0;
+    float avgTotal = 0;
     for (int i = 0; i < AVG_FRAMES; ++i)
-    {
         avgTotal += s_totalHistory[i];
-        avgSpatial += s_charsHistory[i];
-    }
     avgTotal /= AVG_FRAMES;
-    avgSpatial /= AVG_FRAMES;
 
     float fps = (avgTotal > 0.001f) ? (1000.0f / avgTotal) : 0.0f;
-    float spatialPct = (avgTotal > 0.001f) ? (avgSpatial / avgTotal * 100.0f) : 0.0f;
 
     char buf[512];
+    char spawnLine[128] = "";
+    if (charsSpawned > 0 || platoonsActivated > 0)
+    {
+        sprintf(spawnLine, "Spawning: %.0f chars, %d platoons\n",
+            charsSpawned, platoonsActivated);
+    }
+
     sprintf(buf,
         "KenshiPerfMod  [F12 hide]\n"
-        "FPS: %.0f (%.1f ms)\n"
+        "FPS: %.0f (%.1f ms) Speed: %.0fx\n"
         "Characters: %d\n"
-        "Spatial queries: %.0f/frame %.2f ms (%.0f%%)\n"
-        "killList: %.3f ms",
-        fps, avgTotal,
+        "%s"
+        "Frame: %.1f ms | KillList: %.2f ms",
+        fps, totalMs, gameSpeed,
         charCount,
-        spatialCount, spatialMs, spatialPct,
-        killListMs);
+        spawnLine,
+        gameLogicMs, killListMs);
 
     s_overlayText->setCaption(buf);
 }
