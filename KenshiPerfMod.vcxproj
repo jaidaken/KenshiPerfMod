@@ -50,7 +50,7 @@
     <IntDir>$(ProjectDir)x64\$(Configuration)\obj\</IntDir>
     <TargetName>KenshiPerfMod</TargetName>
     <TargetExt>.dll</TargetExt>
-    <IncludePath>Source;$(BOOST_INCLUDE_PATH);$(ProjectDir)KenshiLib\Include;$(ProjectDir)KenshiLib\Include\ogre;$(ProjectDir)thirdparty\rapidjson\include;$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
+    <IncludePath>Source;$(BOOST_INCLUDE_PATH);$(ProjectDir)KenshiLib\Include;$(ProjectDir)KenshiLib\Include\ogre;$(ProjectDir)thirdparty\rapidjson\include;$(VCInstallDir)include;$(WindowsSdkDir)Include;$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
     <LibraryPath>$(BOOST_INCLUDE_PATH)\stage\lib;$(ProjectDir)Libraries;$(ProjectDir)KenshiLib\Libraries\ogre;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <!-- Release x64 -->
@@ -60,7 +60,7 @@
     <IntDir>$(ProjectDir)x64\$(Configuration)\obj\</IntDir>
     <TargetName>KenshiPerfMod</TargetName>
     <TargetExt>.dll</TargetExt>
-    <IncludePath>Source;$(BOOST_INCLUDE_PATH);$(ProjectDir)KenshiLib\Include;$(ProjectDir)KenshiLib\Include\ogre;$(ProjectDir)thirdparty\rapidjson\include;$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
+    <IncludePath>Source;$(BOOST_INCLUDE_PATH);$(ProjectDir)KenshiLib\Include;$(ProjectDir)KenshiLib\Include\ogre;$(ProjectDir)thirdparty\rapidjson\include;$(VCInstallDir)include;$(WindowsSdkDir)Include;$(VC_IncludePath);$(WindowsSDK_IncludePath)</IncludePath>
     <LibraryPath>$(BOOST_INCLUDE_PATH)\stage\lib;$(ProjectDir)Libraries;$(ProjectDir)KenshiLib\Libraries\ogre;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <!-- Debug x64 compile/link -->
@@ -92,6 +92,7 @@
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <ExceptionHandling>Async</ExceptionHandling>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
+      <AdditionalIncludeDirectories>$(BOOST_INCLUDE_PATH);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -101,6 +102,7 @@
       <EnableUAC>false</EnableUAC>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <AdditionalDependencies>KenshiLib.lib;OgreMain_x64.lib;libboost_system-vc100-mt-1_60.lib;libboost_thread-vc100-mt-1_60.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(BOOST_INCLUDE_PATH)\stage\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <!-- Source files -->
