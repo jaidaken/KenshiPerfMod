@@ -4,8 +4,8 @@
         "ProfileOutputPath": "KenshiPerfMod_profile.csv",
         "WorkerThreadCount": 0,
 
-        "EnableSpatialGrid": true,
-        "GridCellSize": 200.0,
+        "EnableSpawnThrottling": true,
+        "MaxSpawnsPerFrame": 30,
 
         "EnableSimulationLOD": true,
         "NearDistance": 500.0,
