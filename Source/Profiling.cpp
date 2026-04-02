@@ -22,199 +22,152 @@ static std::ofstream s_csvFile;
 static LARGE_INTEGER s_freq;
 static int s_frameCount = 0;
 
-// Running stats for summary report
-static double s_sumTotal = 0, s_sumChars = 0, s_sumCharsUT = 0, s_sumSysMsg = 0, s_sumKillList = 0;
-static float s_maxTotal = 0, s_maxChars = 0;
-static int s_maxCharCount = 0;
-static int s_spikeCount = 0; // frames > 16.6ms (below 60fps)
-
-// Per-frame timing data (in QPC ticks)
-struct FrameTiming
-{
-    __int64 frameStart;
-    __int64 frameEnd;
-    __int64 charsUpdate_start;
-    __int64 charsUpdate_end;
-    __int64 charsUpdateUT_start;
-    __int64 charsUpdateUT_end;
-    __int64 processSysMessages_start;
-    __int64 processSysMessages_end;
-    __int64 processKillList_start;
-    __int64 processKillList_end;
-    __int64 dailyUpdates_start;
-    __int64 dailyUpdates_end;
-    bool dailyUpdatesRan;
-};
-
-static FrameTiming s_current;
-
 static double TicksToMs(__int64 ticks)
 {
     return (double)ticks * 1000.0 / (double)s_freq.QuadPart;
 }
 
+// ============================================================
+// Per-frame accumulators (reset at frame start)
+// ============================================================
+
+// Spatial queries (Phase 1)
+static __int64 s_spatialQueryAccum = 0;
+static int s_spatialQueryCount = 0;
+
+// processKillList (only sub-hook that actually fires)
+static __int64 s_killListAccum = 0;
+
+// ============================================================
+// Running stats for summary report
+// ============================================================
+static double s_sumTotal = 0;
+static float s_maxTotal = 0;
+static int s_maxCharCount = 0;
+static int s_spikeCount = 0;      // frames > 16.6ms
+static int s_bigSpikeCount = 0;   // frames > 33.3ms
+static double s_sumSpatialQuery = 0;
+static int s_totalSpatialQueries = 0;
+static float s_maxSpatialQueryFrame = 0;
+
+// ============================================================
 // Hook originals
+// ============================================================
 static void (*mainLoop_orig)(GameWorld*, float) = NULL;
-static void (*charsUpdate_orig)(GameWorld*) = NULL;
-static void (*charsUpdateUT_orig)(GameWorld*) = NULL;
-
-// Alternative: hook individual Character::update to measure total char update time
-static void (*charUpdate_orig)(Character*) = NULL;
-static __int64 s_charUpdateAccum = 0;
-static int s_charUpdateCount = 0;
-static void charUpdate_hook(Character* self)
-{
-    LARGE_INTEGER start, end;
-    QueryPerformanceCounter(&start);
-    charUpdate_orig(self);
-    QueryPerformanceCounter(&end);
-    s_charUpdateAccum += (end.QuadPart - start.QuadPart);
-    ++s_charUpdateCount;
-}
-static void (*processSysMessages_orig)(GameWorld*) = NULL;
 static void (*processKillList_orig)(GameWorld*, bool) = NULL;
-static void (*dailyUpdates_orig)(GameWorld*) = NULL;
 
+// Spatial query hooks (Phase 1 profiling)
+static void (*getObjectsWithinSphere_orig)(GameWorld*, lektor<RootObject*>&,
+    const Ogre::Vector3&, float, itemType, int, RootObject*) = NULL;
+static void (*getCharactersWithinSphere_orig)(GameWorld*, lektor<RootObject*>&,
+    const Ogre::Vector3&, float, float, float, int, int, RootObject*) = NULL;
+
+// ============================================================
 // Hook implementations
-static void mainLoop_hook(GameWorld* self, float time)
+// ============================================================
+
+static void getObjectsWithinSphere_hook(GameWorld* self, lektor<RootObject*>& results,
+    const Ogre::Vector3& spherePos, float radius, itemType type, int maxNumber, RootObject* skip)
 {
     LARGE_INTEGER start, end;
     QueryPerformanceCounter(&start);
-    s_current.frameStart = start.QuadPart;
-    s_current.dailyUpdatesRan = false;
-    // Reset sub-timings so stale values are obvious (show as 0)
-    s_charUpdateAccum = 0;
-    s_charUpdateCount = 0;
-    s_current.charsUpdate_start = s_current.charsUpdate_end = start.QuadPart;
-    s_current.charsUpdateUT_start = s_current.charsUpdateUT_end = start.QuadPart;
-    s_current.processSysMessages_start = s_current.processSysMessages_end = start.QuadPart;
-    s_current.processKillList_start = s_current.processKillList_end = start.QuadPart;
-    s_current.dailyUpdates_start = s_current.dailyUpdates_end = start.QuadPart;
-
-    mainLoop_orig(self, time);
-
+    getObjectsWithinSphere_orig(self, results, spherePos, radius, type, maxNumber, skip);
     QueryPerformanceCounter(&end);
-    s_current.frameEnd = end.QuadPart;
-
-    // Compute frame timings
-    __int64 frameTotal = s_current.frameEnd - s_current.frameStart;
-    __int64 charsUTTotal = s_current.charsUpdateUT_end - s_current.charsUpdateUT_start;
-    __int64 sysMsg = s_current.processSysMessages_end - s_current.processSysMessages_start;
-    __int64 killList = s_current.processKillList_end - s_current.processKillList_start;
-    __int64 daily = s_current.dailyUpdatesRan
-        ? (s_current.dailyUpdates_end - s_current.dailyUpdates_start) : 0;
-    // charsUpdate is inlined and Character::update can't be safely hooked.
-    // Estimate: total frame time minus known measured overheads.
-    __int64 charsTotal = frameTotal - (killList + sysMsg + daily);
-
-    float totalMs = (float)TicksToMs(frameTotal);
-    float charsMs = (float)TicksToMs(charsTotal);
-    float charsUTMs = (float)TicksToMs(charsUTTotal);
-    float sysMsgMs = (float)TicksToMs(sysMsg);
-    float killListMs = (float)TicksToMs(killList);
-    float dailyMs = (float)TicksToMs(daily);
-
-    // Character count from GameWorld (Character::update hook is unsafe)
-    int charCount = 0;
-    if (ou && ou->initialized)
-        charCount = (int)ou->getCharacterUpdateList().size();
-
-    // Write frame data to CSV
-    if (s_csvFile.is_open())
-    {
-        s_csvFile
-            << s_frameCount << ","
-            << totalMs << ","
-            << charsMs << ","
-            << charsUTMs << ","
-            << sysMsgMs << ","
-            << killListMs << ","
-            << dailyMs << ","
-            << charCount << "\n";
-
-        // Flush periodically to avoid data loss on crash
-        if (s_frameCount % 300 == 0)
-            s_csvFile.flush();
-    }
-
-    // Update running stats for summary report
-    s_sumTotal += totalMs;
-    s_sumChars += charsMs;
-    s_sumCharsUT += charsUTMs;
-    s_sumSysMsg += sysMsgMs;
-    s_sumKillList += killListMs;
-    if (totalMs > s_maxTotal) s_maxTotal = totalMs;
-    if (charsMs > s_maxChars) s_maxChars = charsMs;
-    if (charCount > s_maxCharCount) s_maxCharCount = charCount;
-    if (totalMs > 16.6f) ++s_spikeCount;
-
-    // Update overlay (main thread, safe for MyGUI)
-    PerfOverlay::Update(totalMs, charsMs, charsUTMs, sysMsgMs, killListMs, dailyMs, charCount);
-    PerfOverlay::CheckToggleKey();
-
-    ++s_frameCount;
+    s_spatialQueryAccum += (end.QuadPart - start.QuadPart);
+    ++s_spatialQueryCount;
 }
 
-static void charsUpdate_hook(GameWorld* self)
+static void getCharactersWithinSphere_hook(GameWorld* self, lektor<RootObject*>& results,
+    const Ogre::Vector3& spherePos, float farRadius, float nearRadius,
+    float always, int maxFar, int maxNear, RootObject* skip)
 {
     LARGE_INTEGER start, end;
     QueryPerformanceCounter(&start);
-    s_current.charsUpdate_start = start.QuadPart;
-
-    charsUpdate_orig(self);
-
+    getCharactersWithinSphere_orig(self, results, spherePos, farRadius, nearRadius, always, maxFar, maxNear, skip);
     QueryPerformanceCounter(&end);
-    s_current.charsUpdate_end = end.QuadPart;
-}
-
-static void charsUpdateUT_hook(GameWorld* self)
-{
-    LARGE_INTEGER start, end;
-    QueryPerformanceCounter(&start);
-    s_current.charsUpdateUT_start = start.QuadPart;
-
-    charsUpdateUT_orig(self);
-
-    QueryPerformanceCounter(&end);
-    s_current.charsUpdateUT_end = end.QuadPart;
-}
-
-static void processSysMessages_hook(GameWorld* self)
-{
-    LARGE_INTEGER start, end;
-    QueryPerformanceCounter(&start);
-    s_current.processSysMessages_start = start.QuadPart;
-
-    processSysMessages_orig(self);
-
-    QueryPerformanceCounter(&end);
-    s_current.processSysMessages_end = end.QuadPart;
+    s_spatialQueryAccum += (end.QuadPart - start.QuadPart);
+    ++s_spatialQueryCount;
 }
 
 static void processKillList_hook(GameWorld* self, bool forceImmediate)
 {
     LARGE_INTEGER start, end;
     QueryPerformanceCounter(&start);
-    s_current.processKillList_start = start.QuadPart;
-
     processKillList_orig(self, forceImmediate);
-
     QueryPerformanceCounter(&end);
-    s_current.processKillList_end = end.QuadPart;
+    s_killListAccum += (end.QuadPart - start.QuadPart);
 }
 
-static void dailyUpdates_hook(GameWorld* self)
+static void mainLoop_hook(GameWorld* self, float time)
 {
     LARGE_INTEGER start, end;
     QueryPerformanceCounter(&start);
-    s_current.dailyUpdates_start = start.QuadPart;
 
-    dailyUpdates_orig(self);
+    // Reset per-frame accumulators
+    s_spatialQueryAccum = 0;
+    s_spatialQueryCount = 0;
+    s_killListAccum = 0;
+
+    mainLoop_orig(self, time);
 
     QueryPerformanceCounter(&end);
-    s_current.dailyUpdates_end = end.QuadPart;
-    s_current.dailyUpdatesRan = true;
+    __int64 frameTotal = end.QuadPart - start.QuadPart;
+
+    float totalMs = (float)TicksToMs(frameTotal);
+    float spatialMs = (float)TicksToMs(s_spatialQueryAccum);
+    float killListMs = (float)TicksToMs(s_killListAccum);
+
+    // Game logic estimate: total minus spatial queries and kill list
+    // (spatial queries are PART of game logic, but we want them separate for Phase 1)
+    float gameLogicMs = totalMs - killListMs;
+
+    // Character count
+    int charCount = 0;
+    if (ou && ou->initialized)
+        charCount = (int)ou->getCharacterUpdateList().size();
+
+    // Write CSV
+    if (s_csvFile.is_open())
+    {
+        s_csvFile
+            << s_frameCount << ","
+            << totalMs << ","
+            << gameLogicMs << ","
+            << spatialMs << ","
+            << s_spatialQueryCount << ","
+            << killListMs << ","
+            << charCount << "\n";
+
+        if (s_frameCount % 300 == 0)
+            s_csvFile.flush();
+    }
+
+    // Update running stats
+    s_sumTotal += totalMs;
+    s_sumSpatialQuery += spatialMs;
+    s_totalSpatialQueries += s_spatialQueryCount;
+    if (totalMs > s_maxTotal) s_maxTotal = totalMs;
+    if (spatialMs > s_maxSpatialQueryFrame) s_maxSpatialQueryFrame = spatialMs;
+    if (charCount > s_maxCharCount) s_maxCharCount = charCount;
+    if (totalMs > 16.6f) ++s_spikeCount;
+    if (totalMs > 33.3f) ++s_bigSpikeCount;
+
+    // Update overlay
+    PerfOverlay::Update(totalMs, gameLogicMs, spatialMs, (float)s_spatialQueryCount, killListMs, 0, charCount);
+    PerfOverlay::CheckToggleKey();
+
+    // Write periodic summary every 1000 frames (survives crashes)
+    if (s_frameCount > 0 && s_frameCount % 1000 == 0)
+    {
+        Profiling::WriteSummary();
+    }
+
+    ++s_frameCount;
 }
+
+// ============================================================
+// Init / Shutdown / Summary
+// ============================================================
 
 void Profiling::Init()
 {
@@ -227,8 +180,7 @@ void Profiling::Init()
         s_csvFile.open(path);
         if (s_csvFile.is_open())
         {
-            s_csvFile << "frame,total_ms,charsUpdate_ms,charsUpdateUT_ms,"
-                      << "processSysMessages_ms,processKillList_ms,dailyUpdates_ms,char_count\n";
+            s_csvFile << "frame,total_ms,gameLogic_ms,spatialQuery_ms,spatialQuery_count,killList_ms,char_count\n";
             DebugLog("[KenshiPerfMod] Profiling enabled, writing to " + path);
         }
         else
@@ -239,13 +191,12 @@ void Profiling::Init()
     }
 }
 
-static void WriteSummaryReport()
+void Profiling::WriteSummary()
 {
     if (s_frameCount == 0)
         return;
 
     std::string path = PerfSettings::GetProfileOutputPath();
-    // Replace .csv with _summary.txt
     size_t dot = path.rfind('.');
     std::string summaryPath = (dot != std::string::npos)
         ? path.substr(0, dot) + "_summary.txt"
@@ -256,52 +207,74 @@ static void WriteSummaryReport()
         return;
 
     double avgTotal = s_sumTotal / s_frameCount;
-    double avgChars = s_sumChars / s_frameCount;
-    double avgCharsUT = s_sumCharsUT / s_frameCount;
-    double avgSysMsg = s_sumSysMsg / s_frameCount;
-    double avgKillList = s_sumKillList / s_frameCount;
     double avgFps = (avgTotal > 0.001) ? (1000.0 / avgTotal) : 0;
-    double charsPct = (avgTotal > 0.001) ? (avgChars / avgTotal * 100.0) : 0;
+    double avgSpatial = s_sumSpatialQuery / s_frameCount;
+    double avgSpatialCount = (double)s_totalSpatialQueries / s_frameCount;
+    double spatialPct = (s_sumTotal > 0.001) ? (s_sumSpatialQuery / s_sumTotal * 100.0) : 0;
 
-    f << "=== KenshiPerfMod Profiling Summary ===" << "\n";
+    f << "=== KenshiPerfMod Profiling Summary ===\n";
+    f << "Frames recorded: " << s_frameCount << "\n";
+    f << "Max characters:  " << s_maxCharCount << "\n";
     f << "\n";
-    f << "Total frames recorded: " << s_frameCount << "\n";
-    f << "Max characters loaded: " << s_maxCharCount << "\n";
+
+    f << "--- Frame Time ---\n";
+    f << "  Average: " << avgTotal << " ms (" << avgFps << " fps)\n";
+    f << "  Worst:   " << s_maxTotal << " ms\n";
+    f << "  Below 60fps: " << s_spikeCount << " frames (" << ((float)s_spikeCount / s_frameCount * 100.0f) << "%)\n";
+    f << "  Below 30fps: " << s_bigSpikeCount << " frames (" << ((float)s_bigSpikeCount / s_frameCount * 100.0f) << "%)\n";
     f << "\n";
-    f << "--- Average Frame Breakdown ---" << "\n";
-    f << "  Total frame:       " << avgTotal << " ms (" << avgFps << " fps)" << "\n";
-    f << "  charsUpdate:       " << avgChars << " ms (" << charsPct << "% of frame)" << "\n";
-    f << "  charsUpdateUT:     " << avgCharsUT << " ms" << "\n";
-    f << "  processSysMessages:" << avgSysMsg << " ms" << "\n";
-    f << "  processKillList:   " << avgKillList << " ms" << "\n";
-    f << "\n";
-    f << "--- Worst Frames ---" << "\n";
-    f << "  Worst total frame: " << s_maxTotal << " ms" << "\n";
-    f << "  Worst charsUpdate: " << s_maxChars << " ms" << "\n";
-    f << "  Frames below 60fps:" << s_spikeCount << " (" << ((float)s_spikeCount / s_frameCount * 100.0f) << "%)" << "\n";
-    f << "\n";
-    f << "--- Analysis ---" << "\n";
-    if (charsPct > 50.0)
-        f << "  ** charsUpdate dominates frame time (" << charsPct << "%). Phases 2-4 (simulation LOD, parallel updates) will have high impact." << "\n";
-    else if (charsPct > 20.0)
-        f << "  charsUpdate is significant (" << charsPct << "%). Phases 2-4 will help." << "\n";
+
+    f << "--- Spatial Queries (Phase 1 target) ---\n";
+    f << "  Total calls:     " << s_totalSpatialQueries << "\n";
+    f << "  Avg calls/frame: " << avgSpatialCount << "\n";
+    f << "  Avg time/frame:  " << avgSpatial << " ms (" << spatialPct << "% of frame)\n";
+    f << "  Worst frame:     " << s_maxSpatialQueryFrame << " ms\n";
+    if (spatialPct > 10.0)
+        f << "  >> HIGH IMPACT: Spatial grid (Phase 1) will significantly help.\n";
+    else if (spatialPct > 2.0)
+        f << "  >> Moderate: Spatial grid (Phase 1) will help.\n";
     else
-        f << "  charsUpdate is small (" << charsPct << "%). Bottleneck may be elsewhere (rendering, physics, etc)." << "\n";
-
-    if (s_spikeCount > s_frameCount * 0.05)
-        f << "  ** High spike rate (" << s_spikeCount << " frames). Daily update spreading (Phase 5) and simulation LOD (Phase 2) will help." << "\n";
-
+        f << "  >> Low: Spatial queries are not a major bottleneck.\n";
     f << "\n";
-    f << "Raw data: " << PerfSettings::GetProfileOutputPath() << "\n";
 
+    f << "--- Character Updates (Phase 2-4 target) ---\n";
+    f << "  Characters loaded: " << s_maxCharCount << "\n";
+    f << "  NOTE: Character update time cannot be isolated (function is inlined).\n";
+    f << "  Total frame time scales with character count.\n";
+    f << "  At " << s_maxCharCount << " characters, avg frame is " << avgTotal << " ms.\n";
+    if (s_maxCharCount > 0)
+        f << "  Per-character estimate: " << (avgTotal / s_maxCharCount * 1000.0) << " us/char\n";
+    f << "\n";
+
+    f << "--- Spikes (Phase 5 target) ---\n";
+    if (s_bigSpikeCount > 0)
+        f << "  " << s_bigSpikeCount << " frames exceeded 33ms. Daily update spreading will help.\n";
+    else
+        f << "  No severe spikes detected.\n";
+    f << "\n";
+
+    f << "--- What hooks are working ---\n";
+    f << "  mainLoop_GPUSensitiveStuff: YES (total frame time)\n";
+    f << "  getObjectsWithinSphere:     YES (spatial query timing)\n";
+    f << "  getCharactersWithinSphere:  YES (spatial query timing)\n";
+    f << "  processKillList:            YES\n";
+    f << "  charsUpdate:                NO (inlined by compiler)\n";
+    f << "  charsUpdateUT:              NO (inlined by compiler)\n";
+    f << "  processSysMessages:         NO (inlined by compiler)\n";
+    f << "  dailyUpdates:               NO (inlined by compiler)\n";
+    f << "  Character::update:          UNSAFE (crashes on hook)\n";
+    f << "\n";
+
+    f << "Raw data: " << PerfSettings::GetProfileOutputPath() << "\n";
     f.close();
-    PerfLog::InfoF("Summary report written to %s", summaryPath.c_str());
+
+    PerfLog::InfoF("Summary written (%d frames, %d chars, %.1f avg ms)",
+        s_frameCount, s_maxCharCount, avgTotal);
 }
 
 void Profiling::Shutdown()
 {
-    WriteSummaryReport();
-
+    WriteSummary();
     if (s_csvFile.is_open())
     {
         s_csvFile.flush();
@@ -317,54 +290,35 @@ void Profiling::InstallHooks()
 
     KenshiLib::HookStatus status;
 
+    // Main frame loop (works - this is our primary timing source)
     status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff),
         (void*)mainLoop_hook, (void**)&mainLoop_orig);
-    PerfLog::InfoF("Hook mainLoop_GPUSensitiveStuff: %s (addr=0x%llX)",
-        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
-        KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff));
+    PerfLog::InfoF("Hook mainLoop: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
+
+    // Spatial queries - Phase 1 decision data
+    status = KenshiLib::AddHook(
+        (void*)KenshiLib::GetRealAddress(&GameWorld::getObjectsWithinSphere),
+        (void*)getObjectsWithinSphere_hook, (void**)&getObjectsWithinSphere_orig);
+    PerfLog::InfoF("Hook getObjectsWithinSphere: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
     status = KenshiLib::AddHook(
-        (void*)KenshiLib::GetRealAddress(&GameWorld::charsUpdate),
-        (void*)charsUpdate_hook, (void**)&charsUpdate_orig);
-    PerfLog::InfoF("Hook charsUpdate: %s (addr=0x%llX)",
-        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
-        KenshiLib::GetRealAddress(&GameWorld::charsUpdate));
+        (void*)KenshiLib::GetRealAddress(&GameWorld::getCharactersWithinSphere),
+        (void*)getCharactersWithinSphere_hook, (void**)&getCharactersWithinSphere_orig);
+    PerfLog::InfoF("Hook getCharactersWithinSphere: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
-    status = KenshiLib::AddHook(
-        (void*)KenshiLib::GetRealAddress(&GameWorld::charsUpdateUT),
-        (void*)charsUpdateUT_hook, (void**)&charsUpdateUT_orig);
-    PerfLog::InfoF("Hook charsUpdateUT: %s (addr=0x%llX)",
-        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
-        KenshiLib::GetRealAddress(&GameWorld::charsUpdateUT));
-
-    status = KenshiLib::AddHook(
-        (void*)KenshiLib::GetRealAddress(&GameWorld::processSysMessages),
-        (void*)processSysMessages_hook, (void**)&processSysMessages_orig);
-    PerfLog::InfoF("Hook processSysMessages: %s (addr=0x%llX)",
-        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
-        KenshiLib::GetRealAddress(&GameWorld::processSysMessages));
-
+    // processKillList (confirmed working)
     status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::processKillList),
         (void*)processKillList_hook, (void**)&processKillList_orig);
-    PerfLog::InfoF("Hook processKillList: %s (addr=0x%llX)",
-        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
-        KenshiLib::GetRealAddress(&GameWorld::processKillList));
+    PerfLog::InfoF("Hook processKillList: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
-    status = KenshiLib::AddHook(
-        (void*)KenshiLib::GetRealAddress(&GameWorld::dailyUpdates),
-        (void*)dailyUpdates_hook, (void**)&dailyUpdates_orig);
-    PerfLog::InfoF("Hook dailyUpdates: %s (addr=0x%llX)",
-        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
-        KenshiLib::GetRealAddress(&GameWorld::dailyUpdates));
-
-    // NOTE: Character::update() cannot be safely hooked:
-    // - _NV_ variants resolve to trampolines (wrong address)
-    // - Direct RVA hooking crashes (prologue too short or instruction alignment issue)
-    // Instead we measure character update time by subtracting known costs from total frame time.
-    // char_count is read from GameWorld::getCharacterUpdateList().
-    PerfLog::Info("Character::update hook skipped (unsafe). Using frame subtraction method.");
+    // NOTE: The following cannot be hooked (inlined or unsafe):
+    // - charsUpdate, charsUpdateUT, processSysMessages, dailyUpdates (inlined)
+    // - Character::update (prologue too short, crashes MinHook)
+    // - Town::update, Building::update (likely same issue)
+    // We measure these indirectly through total frame time.
+    PerfLog::Info("Inlined functions skipped. Using frame subtraction for estimates.");
 
     DebugLog("[KenshiPerfMod] Profiling hooks installed");
 }
