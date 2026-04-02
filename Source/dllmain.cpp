@@ -4,6 +4,7 @@
 #include "TLSMessageQueue.h"
 #include "Profiling.h"
 #include "Overlay.h"
+#include "SpawnThrottle.h"
 
 #include <kenshi/Kenshi.h>
 #include <kenshi/GameWorld.h>
@@ -55,8 +56,9 @@ __declspec(dllexport) void startPlugin()
     }
 
     // Log enabled features
-    PerfLog::InfoF("Features: SpatialGrid=%s SimLOD=%s ParallelThreaded=%s ParallelChar=%s DailySpreading=%s",
-        PerfSettings::GetEnableSpatialGrid() ? "on" : "off",
+    PerfLog::InfoF("Features: SpawnThrottle=%s(%d) SimLOD=%s ParallelThreaded=%s ParallelChar=%s DailySpreading=%s",
+        PerfSettings::GetEnableSpawnThrottling() ? "on" : "off",
+        PerfSettings::GetMaxSpawnsPerFrame(),
         PerfSettings::GetEnableSimulationLOD() ? "on" : "off",
         PerfSettings::GetEnableParallelThreadedUpdates() ? "on" : "off",
         PerfSettings::GetEnableParallelCharUpdate() ? "on" : "off",
@@ -70,7 +72,8 @@ __declspec(dllexport) void startPlugin()
     // Initialize overlay (hooks MainBarGUI constructor, creates widget when in-game)
     PerfOverlay::Init();
 
-    // TODO Phase 1: SpatialGrid::Init()
+    // Phase 1: Spawn Throttling
+    SpawnThrottle::Init();
     // TODO Phase 2: SimulationLOD::Init()
     // TODO Phase 3: ParallelThreadedUpdates::Init()
     // TODO Phase 4: ParallelCharsUpdate::Init()
