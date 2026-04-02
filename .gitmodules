@@ -1,0 +1,6 @@
+[submodule "KenshiLib"]
+	path = KenshiLib
+	url = https://github.com/KenshiReclaimer/KenshiLib.git
+[submodule "thirdparty/rapidjson"]
+	path = thirdparty/rapidjson
+	url = https://github.com/Tencent/rapidjson.git

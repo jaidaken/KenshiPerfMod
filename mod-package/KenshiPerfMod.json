@@ -1,0 +1,30 @@
+{
+    "KenshiPerfMod": {
+        "EnableProfiling": true,
+        "ProfileOutputPath": "KenshiPerfMod_profile.csv",
+        "WorkerThreadCount": 0,
+
+        "EnableSpatialGrid": true,
+        "GridCellSize": 200.0,
+
+        "EnableSimulationLOD": true,
+        "NearDistance": 500.0,
+        "MediumDistance": 2000.0,
+        "FarUpdateInterval": 4,
+        "PathRequestsPerFrame": 10,
+
+        "EnableParallelThreadedUpdates": true,
+        "EnableParallelCharUpdate": false,
+        "EnablePrefetch": true,
+
+        "EnableDailyUpdateSpreading": true,
+        "DailyUpdateBatchSize": 20,
+
+        "EnableParallelBuildings": false,
+
+        "EnableModLoadOptimizer": true,
+        "EnablePathInterning": true,
+
+        "EnableOgreAnimThreading": false
+    }
+}

@@ -1,0 +1,133 @@
+name: Build KenshiPerfMod
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # --- Windows 7.1 SDK / VC++ 2010 toolset ---
+
+      - name: Cache W7SDK
+        uses: actions/cache@v4
+        id: cache-w7sdk
+        with:
+          path: W7SDK-v1.zip
+          key: w7sdk-v1-sha256-8d90703130c4bc735fa215ee14cddf868e27c156b72065c434ec747d5f120d44
+
+      - name: Download W7SDK
+        if: steps.cache-w7sdk.outputs.cache-hit != 'true'
+        run: aria2c -x 16 -s 16 -k 1M https://github.com/i486/W7SDK/releases/download/W7SDK-v1/W7SDK-v1.zip
+
+      - name: Install W7SDK
+        shell: powershell
+        run: |
+          $hash = (Get-FileHash W7SDK-v1.zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne "8d90703130c4bc735fa215ee14cddf868e27c156b72065c434ec747d5f120d44") {
+            Write-Error "W7SDK hash mismatch: $hash"
+            exit 1
+          }
+          7z x W7SDK-v1.zip -oW7SDK -y
+          Copy-Item "W7SDK\Program Files\*" "C:\Program Files\" -Recurse -Force
+          Copy-Item "W7SDK\Program Files (x86)\*" "C:\Program Files (x86)\" -Recurse -Force
+          Copy-Item "W7SDK\vcredist\x64\*" "C:\Windows\System32\" -Force
+          Copy-Item "W7SDK\vcredist\x86\*" "C:\Windows\SysWOW64\" -Force
+          reg import "W7SDK\Registry\W7SDK.reg"
+
+          $gacutil = "C:\Program Files\Microsoft SDKs\Windows\v7.1\Bin\NETFX 4.0 Tools\x64\gacutil.exe"
+          @(
+            "C:\Program Files (x86)\MSBuild\Microsoft.Cpp\v4.0\Microsoft.Build.CPPTasks.Common.dll",
+            "C:\Program Files (x86)\MSBuild\Microsoft.Cpp\v4.0\Platforms\Win32\Microsoft.Build.CPPTasks.Win32.dll",
+            "C:\Program Files (x86)\MSBuild\Microsoft.Cpp\v4.0\Platforms\x64\Microsoft.Build.CPPTasks.x64.dll"
+          ) | ForEach-Object { & $gacutil /i $_ }
+
+      # --- Boost 1.60.0 ---
+
+      - name: Cache Boost 1.60.0
+        uses: actions/cache@v4
+        id: cache-boost
+        with:
+          path: C:\boost_1_60_0
+          key: boost-1.60.0-msvc10-x64-v1
+
+      - name: Install Boost 1.60.0
+        if: steps.cache-boost.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          Write-Host "Downloading Boost 1.60.0 for MSVC 10.0 x64..."
+          Invoke-WebRequest `
+            -Uri "https://sourceforge.net/projects/boost/files/boost-binaries/1.60.0/boost_1_60_0-msvc-10.0-64.exe/download" `
+            -OutFile boost_installer.exe `
+            -UseBasicParsing
+          Write-Host "Installing Boost..."
+          Start-Process -Wait -FilePath ".\boost_installer.exe" `
+            -ArgumentList "/SILENT","/SP-","/SUPPRESSMSGBOXES","/DIR=C:\boost_1_60_0"
+          Write-Host "Boost installed to C:\boost_1_60_0"
+
+      # --- KenshiLib.lib (prebuilt from release) ---
+
+      - name: Cache KenshiLib.lib
+        uses: actions/cache@v4
+        id: cache-kenshilib
+        with:
+          path: KenshiLib/Libraries/KenshiLib.lib
+          key: kenshilib-v0.2.1
+
+      - name: Download KenshiLib.lib
+        if: steps.cache-kenshilib.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          gh release download v0.2.1 --repo KenshiReclaimer/KenshiLib --pattern "*.zip" --dir _klib_tmp
+          Expand-Archive -Path "_klib_tmp\KenshiLib_v0.2.1.zip" -DestinationPath _klib_tmp\extracted
+          New-Item -ItemType Directory -Force -Path "Libraries"
+          Copy-Item "_klib_tmp\extracted\KenshiLib.lib" "Libraries\KenshiLib.lib"
+          Remove-Item -Recurse _klib_tmp
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # --- Build ---
+
+      - name: Build KenshiPerfMod (Release x64)
+        shell: cmd
+        env:
+          BOOST_INCLUDE_PATH: C:\boost_1_60_0
+        run: |
+          call "C:\Program Files\Microsoft SDKs\Windows\v7.1\Bin\SetEnv.cmd" /x64 /Release 2>nul
+          msbuild KenshiPerfMod\KenshiPerfMod.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+
+      # --- Package ---
+
+      - name: Package mod
+        shell: powershell
+        run: |
+          $outDir = "KenshiPerfMod-release"
+          New-Item -ItemType Directory -Force -Path $outDir
+
+          # Find the built DLL
+          $dll = Get-ChildItem -Recurse -Filter "KenshiPerfMod.dll" | Select-Object -First 1
+          if (-not $dll) { Write-Error "DLL not found"; exit 1 }
+
+          Copy-Item $dll.FullName "$outDir\KenshiPerfMod.dll"
+          Copy-Item "KenshiPerfMod\mod-package\RE_Kenshi.json" "$outDir\"
+          Copy-Item "KenshiPerfMod\mod-package\KenshiPerfMod.json" "$outDir\"
+          Copy-Item "KenshiPerfMod\mod-package\KenshiPerfMod.mod" "$outDir\"
+
+          Write-Host "Package contents:"
+          Get-ChildItem $outDir
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KenshiPerfMod
+          path: KenshiPerfMod-release/
+          retention-days: 30
