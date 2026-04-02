@@ -115,9 +115,9 @@ jobs:
         env:
           BOOST_INCLUDE_PATH: C:\boost_1_60_0
         run: |
-          :: Use VS2022's MSBuild (knows how to find C++ props) but with the v100 toolset
-          :: SetEnv.cmd clobbers VCTargetsPath which breaks VS2022 MSBuild, so we don't call it.
-          :: The Windows7.1SDK platform toolset registered via GAC handles compiler discovery.
+          :: VC++ 2010 CL.exe needs its runtime DLLs on the PATH
+          set "PATH=C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin\x86_amd64;C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin;C:\Program Files (x86)\Microsoft Visual Studio 10.0\Common7\IDE;%PATH%"
+          :: Use VS2022's MSBuild with the v100 toolset (registered via GAC)
           "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe" KenshiPerfMod.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:normal
 
       # --- Package ---
