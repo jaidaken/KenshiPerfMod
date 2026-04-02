@@ -32,6 +32,10 @@ static double TicksToMs(__int64 ticks)
     return (double)ticks * 1000.0 / (double)s_freq.QuadPart;
 }
 
+// Track wall-clock time between mainLoop calls to measure render/present time
+static __int64 s_lastMainLoopEnd = 0;  // QPC tick when last mainLoop hook returned
+static __int64 s_renderTime = 0;       // ticks between last hook return and this hook start
+
 // ============================================================
 // Per-frame accumulators (reset at frame start)
 // ============================================================
@@ -64,6 +68,8 @@ static int s_totalSpatialQueries = 0;
 static float s_maxSpatialQueryFrame = 0;
 static int s_activeFrameCount = 0;
 static float s_maxGameSpeed = 0;
+static double s_sumRender = 0;
+static double s_sumLogic = 0;
 static int s_totalCharsSpawned = 0;
 static int s_totalSquadsSpawned = 0;
 static int s_totalPlatoonsActivated = 0;
@@ -175,6 +181,12 @@ static void mainLoop_hook(GameWorld* self, float time)
     LARGE_INTEGER start, end;
     QueryPerformanceCounter(&start);
 
+    // Measure render/present time: gap between last mainLoop return and this mainLoop start
+    if (s_lastMainLoopEnd > 0)
+        s_renderTime = start.QuadPart - s_lastMainLoopEnd;
+    else
+        s_renderTime = 0;
+
     // Reset per-frame accumulators
     s_spatialQueryAccum = 0;
     s_spatialQueryCount = 0;
@@ -189,9 +201,13 @@ static void mainLoop_hook(GameWorld* self, float time)
     mainLoop_orig(self, time);
 
     QueryPerformanceCounter(&end);
+    s_lastMainLoopEnd = end.QuadPart;
+
     __int64 frameTotal = end.QuadPart - start.QuadPart;
 
-    float totalMs = (float)TicksToMs(frameTotal);
+    float totalMs = (float)TicksToMs(frameTotal);          // time inside mainLoop (game logic)
+    float renderMs = (float)TicksToMs(s_renderTime);       // time outside mainLoop (OGRE render + present + vsync)
+    float wallMs = totalMs + renderMs;                      // total wall-clock frame time
     float spatialMs = (float)TicksToMs(s_spatialQueryAccum);
     float killListMs = (float)TicksToMs(s_killListAccum);
     float gameLogicMs = totalMs - killListMs;
@@ -218,7 +234,9 @@ static void mainLoop_hook(GameWorld* self, float time)
     {
         s_csvFile
             << s_frameCount << ","
+            << wallMs << ","
             << totalMs << ","
+            << renderMs << ","
             << gameLogicMs << ","
             << spatialMs << ","
             << s_spatialQueryCount << ","
@@ -240,7 +258,9 @@ static void mainLoop_hook(GameWorld* self, float time)
     // Update running stats (skip paused frames for averages)
     if (!paused)
     {
-        s_sumTotal += totalMs;
+        s_sumTotal += wallMs;
+        s_sumLogic += totalMs;
+        s_sumRender += renderMs;
         s_sumSpatialQuery += spatialMs;
         s_totalSpatialQueries += s_spatialQueryCount;
         ++s_activeFrameCount;
@@ -260,7 +280,7 @@ static void mainLoop_hook(GameWorld* self, float time)
     SpawnThrottle_UpdateFrameTime(totalMs);
 
     // Update overlay with all profiler data
-    PerfOverlay::Update(totalMs, gameLogicMs, spatialMs, (float)s_spatialQueryCount, killListMs,
+    PerfOverlay::Update(totalMs, renderMs, spatialMs, (float)s_spatialQueryCount, killListMs,
         (float)s_charsSpawnedThisFrame, charCount, gameSpeed,
         s_platoonsActivatedThisFrame, s_terrainLoadsThisFrame);
     PerfOverlay::CheckToggleKey();
@@ -287,8 +307,9 @@ void Profiling::Init()
         s_csvFile.open(path);
         if (s_csvFile.is_open())
         {
-            s_csvFile << "frame,total_ms,gameLogic_ms,spatialQuery_ms,spatialQuery_count,"
-                      << "killList_ms,char_count,game_speed,paused,"
+            s_csvFile << "frame,wall_ms,logic_ms,render_ms,gameLogic_ms,"
+                      << "spatialQuery_ms,spatialQuery_count,killList_ms,"
+                      << "char_count,game_speed,paused,"
                       << "chars_spawned,squads_spawned,platoons_activated,terrain_loads,chars_added,"
                       << "cam_x,cam_y,cam_z\n";
             DebugLog("[KenshiPerfMod] Profiling enabled, writing to " + path);
@@ -317,8 +338,12 @@ void Profiling::WriteSummary()
         return;
 
     int frames = s_activeFrameCount > 0 ? s_activeFrameCount : 1;
-    double avgTotal = s_sumTotal / frames;
-    double avgFps = (avgTotal > 0.001) ? (1000.0 / avgTotal) : 0;
+    double avgWall = s_sumTotal / frames;
+    double avgLogic = s_sumLogic / frames;
+    double avgRender = s_sumRender / frames;
+    double avgFps = (avgWall > 0.001) ? (1000.0 / avgWall) : 0;
+    double logicPct = (avgWall > 0.001) ? (avgLogic / avgWall * 100.0) : 0;
+    double renderPct = (avgWall > 0.001) ? (avgRender / avgWall * 100.0) : 0;
     double avgSpatial = s_sumSpatialQuery / frames;
     double avgSpatialCount = (double)s_totalSpatialQueries / frames;
     double spatialPct = (s_sumTotal > 0.001) ? (s_sumSpatialQuery / s_sumTotal * 100.0) : 0;
@@ -331,10 +356,19 @@ void Profiling::WriteSummary()
     f << "\n";
 
     f << "--- Frame Time ---\n";
-    f << "  Average: " << avgTotal << " ms (" << avgFps << " fps)\n";
-    f << "  Worst:   " << s_maxTotal << " ms\n";
+    f << "  Wall clock avg:  " << avgWall << " ms (" << avgFps << " fps)\n";
+    f << "  Game logic avg:  " << avgLogic << " ms (" << logicPct << "% of frame)\n";
+    f << "  Render/present:  " << avgRender << " ms (" << renderPct << "% of frame)\n";
+    f << "  Worst frame:     " << s_maxTotal << " ms\n";
     f << "  Below 60fps: " << s_spikeCount << " (" << ((float)s_spikeCount / frames * 100.0f) << "%)\n";
     f << "  Below 30fps: " << s_bigSpikeCount << " (" << ((float)s_bigSpikeCount / frames * 100.0f) << "%)\n";
+    f << "\n";
+    if (logicPct > 70.0)
+        f << "  >> CPU-BOUND: Game logic dominates. Parallelization (Phase 3-4) will help.\n";
+    else if (renderPct > 70.0)
+        f << "  >> GPU-BOUND: Rendering dominates. GPU optimizations (Phase 7) will help.\n";
+    else
+        f << "  >> BALANCED: Both logic and rendering contribute. Both paths worth optimizing.\n";
     f << "\n";
 
     f << "--- Spatial Queries (Phase 1) ---\n";
