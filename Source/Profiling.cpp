@@ -17,6 +17,7 @@
 #include <kenshi/Globals.h>
 #include <core/Functions.h>
 #include <Debug.h>
+#include "SpawnThrottle.h"
 
 #include <fstream>
 #include <string>
@@ -255,8 +256,13 @@ static void mainLoop_hook(GameWorld* self, float time)
     s_totalPlatoonsActivated += s_platoonsActivatedThisFrame;
     s_totalTerrainLoads += s_terrainLoadsThisFrame;
 
-    // Update overlay
-    PerfOverlay::Update(totalMs, gameLogicMs, spatialMs, (float)s_spatialQueryCount, killListMs, 0, charCount);
+    // Feed frame time to spawn throttle for dynamic budget
+    SpawnThrottle_UpdateFrameTime(totalMs);
+
+    // Update overlay with all profiler data
+    PerfOverlay::Update(totalMs, gameLogicMs, spatialMs, (float)s_spatialQueryCount, killListMs,
+        (float)s_charsSpawnedThisFrame, charCount, gameSpeed,
+        s_platoonsActivatedThisFrame, s_terrainLoadsThisFrame);
     PerfOverlay::CheckToggleKey();
 
     // Periodic summary every 1000 frames
