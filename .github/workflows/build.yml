@@ -93,7 +93,7 @@ jobs:
         uses: actions/cache@v4
         id: cache-kenshilib
         with:
-          path: KenshiLib/Libraries/KenshiLib.lib
+          path: Libraries/KenshiLib.lib
           key: kenshilib-v0.2.1
 
       - name: Download KenshiLib.lib
@@ -116,7 +116,7 @@ jobs:
           BOOST_INCLUDE_PATH: C:\boost_1_60_0
         run: |
           call "C:\Program Files\Microsoft SDKs\Windows\v7.1\Bin\SetEnv.cmd" /x64 /Release 2>nul
-          msbuild KenshiPerfMod\KenshiPerfMod.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+          msbuild KenshiPerfMod.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:minimal
 
       # --- Package ---
 
