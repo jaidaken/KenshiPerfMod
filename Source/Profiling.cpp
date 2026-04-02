@@ -10,6 +10,10 @@
 #include <kenshi/GameWorld.h>
 #include <kenshi/Character.h>
 #include <kenshi/RootObject.h>
+#include <kenshi/RootObjectFactory.h>
+#include <kenshi/Platoon.h>
+#include <kenshi/ResourceLoader.h>
+#include <kenshi/PhysicsActual.h>
 #include <kenshi/Globals.h>
 #include <core/Functions.h>
 #include <Debug.h>
@@ -35,22 +39,35 @@ static double TicksToMs(__int64 ticks)
 static __int64 s_spatialQueryAccum = 0;
 static int s_spatialQueryCount = 0;
 
-// processKillList (only sub-hook that actually fires)
+// Kill list
 static __int64 s_killListAccum = 0;
 
+// Zone loading / spawning
+static int s_charsSpawnedThisFrame = 0;
+static int s_squadsSpawnedThisFrame = 0;
+static int s_platoonsActivatedThisFrame = 0;
+static int s_meshLoadsThisFrame = 0;
+static int s_terrainLoadsThisFrame = 0;
+static int s_charsAddedToUpdateList = 0;
+
 // ============================================================
-// Running stats for summary report
+// Running stats for summary
 // ============================================================
 static double s_sumTotal = 0;
 static float s_maxTotal = 0;
 static int s_maxCharCount = 0;
-static int s_spikeCount = 0;      // frames > 16.6ms
-static int s_bigSpikeCount = 0;   // frames > 33.3ms
+static int s_spikeCount = 0;
+static int s_bigSpikeCount = 0;
 static double s_sumSpatialQuery = 0;
 static int s_totalSpatialQueries = 0;
 static float s_maxSpatialQueryFrame = 0;
-static int s_activeFrameCount = 0; // non-paused frames
+static int s_activeFrameCount = 0;
 static float s_maxGameSpeed = 0;
+static int s_totalCharsSpawned = 0;
+static int s_totalSquadsSpawned = 0;
+static int s_totalPlatoonsActivated = 0;
+static int s_totalMeshLoads = 0;
+static int s_totalTerrainLoads = 0;
 
 // ============================================================
 // Hook originals
@@ -58,16 +75,27 @@ static float s_maxGameSpeed = 0;
 static void (*mainLoop_orig)(GameWorld*, float) = NULL;
 static void (*processKillList_orig)(GameWorld*, bool) = NULL;
 
-// Spatial query hooks (Phase 1 profiling)
+// Spatial queries
 static void (*getObjectsWithinSphere_orig)(GameWorld*, lektor<RootObject*>&,
     const Ogre::Vector3&, float, itemType, int, RootObject*) = NULL;
 static void (*getCharactersWithinSphere_orig)(GameWorld*, lektor<RootObject*>&,
     const Ogre::Vector3&, float, float, float, int, int, RootObject*) = NULL;
 
+// Zone loading hooks
+static RootObject* (*createRandomCharacter_orig)(RootObjectFactory*, Faction*,
+    Ogre::Vector3, RootObjectContainer*, GameData*, Building*, float) = NULL;
+static Platoon* (*createRandomSquad_orig)(RootObjectFactory*, Faction*, Ogre::Vector3,
+    TownBase*, int, Building*, GameData*, RootObjectContainer*, AreaBiomeGroup*,
+    Platoon*, bool, const hand&, TownBase*, float, SquadType, bool) = NULL;
+static void (*platoonActivate_orig)(Platoon*) = NULL;
+static void (*addToUpdateListMain_orig)(GameWorld*, Character*) = NULL;
+static void (*loadTerrain_orig)(PhysicsInterface*, TerrainSector*) = NULL;
+
 // ============================================================
 // Hook implementations
 // ============================================================
 
+// --- Spatial queries ---
 static void getObjectsWithinSphere_hook(GameWorld* self, lektor<RootObject*>& results,
     const Ogre::Vector3& spherePos, float radius, itemType type, int maxNumber, RootObject* skip)
 {
@@ -91,6 +119,7 @@ static void getCharactersWithinSphere_hook(GameWorld* self, lektor<RootObject*>&
     ++s_spatialQueryCount;
 }
 
+// --- Kill list ---
 static void processKillList_hook(GameWorld* self, bool forceImmediate)
 {
     LARGE_INTEGER start, end;
@@ -100,6 +129,46 @@ static void processKillList_hook(GameWorld* self, bool forceImmediate)
     s_killListAccum += (end.QuadPart - start.QuadPart);
 }
 
+// --- Zone loading counters ---
+static RootObject* createRandomCharacter_hook(RootObjectFactory* self, Faction* faction,
+    Ogre::Vector3 position, RootObjectContainer* owner, GameData* tmpl, Building* home, float age)
+{
+    ++s_charsSpawnedThisFrame;
+    return createRandomCharacter_orig(self, faction, position, owner, tmpl, home, age);
+}
+
+static Platoon* createRandomSquad_hook(RootObjectFactory* self, Faction* faction,
+    Ogre::Vector3 position, TownBase* homeTown, int maxnum, Building* home, GameData* squad,
+    RootObjectContainer* ownr, AreaBiomeGroup* maparea, Platoon* activePlatoon,
+    bool permanentsquad, const hand& AItarget, TownBase* targetTown, float sizeMultiplier,
+    SquadType squadType, bool isJustARefresh)
+{
+    ++s_squadsSpawnedThisFrame;
+    return createRandomSquad_orig(self, faction, position, homeTown, maxnum, home, squad,
+        ownr, maparea, activePlatoon, permanentsquad, AItarget, targetTown, sizeMultiplier,
+        squadType, isJustARefresh);
+}
+
+static void platoonActivate_hook(Platoon* self)
+{
+    ++s_platoonsActivatedThisFrame;
+    PerfLog::InfoF("Platoon activated (frame %d)", s_frameCount);
+    platoonActivate_orig(self);
+}
+
+static void addToUpdateListMain_hook(GameWorld* self, Character* character)
+{
+    ++s_charsAddedToUpdateList;
+    addToUpdateListMain_orig(self, character);
+}
+
+static void loadTerrain_hook(PhysicsInterface* self, TerrainSector* t)
+{
+    ++s_terrainLoadsThisFrame;
+    loadTerrain_orig(self, t);
+}
+
+// --- Main loop ---
 static void mainLoop_hook(GameWorld* self, float time)
 {
     LARGE_INTEGER start, end;
@@ -109,6 +178,12 @@ static void mainLoop_hook(GameWorld* self, float time)
     s_spatialQueryAccum = 0;
     s_spatialQueryCount = 0;
     s_killListAccum = 0;
+    s_charsSpawnedThisFrame = 0;
+    s_squadsSpawnedThisFrame = 0;
+    s_platoonsActivatedThisFrame = 0;
+    s_meshLoadsThisFrame = 0;
+    s_terrainLoadsThisFrame = 0;
+    s_charsAddedToUpdateList = 0;
 
     mainLoop_orig(self, time);
 
@@ -120,7 +195,7 @@ static void mainLoop_hook(GameWorld* self, float time)
     float killListMs = (float)TicksToMs(s_killListAccum);
     float gameLogicMs = totalMs - killListMs;
 
-    // Read game state (no hooks needed - just reading memory)
+    // Read game state
     int charCount = 0;
     float gameSpeed = 0;
     bool paused = false;
@@ -150,13 +225,18 @@ static void mainLoop_hook(GameWorld* self, float time)
             << charCount << ","
             << gameSpeed << ","
             << (paused ? 1 : 0) << ","
+            << s_charsSpawnedThisFrame << ","
+            << s_squadsSpawnedThisFrame << ","
+            << s_platoonsActivatedThisFrame << ","
+            << s_terrainLoadsThisFrame << ","
+            << s_charsAddedToUpdateList << ","
             << camX << "," << camY << "," << camZ << "\n";
 
         if (s_frameCount % 300 == 0)
             s_csvFile.flush();
     }
 
-    // Update running stats (skip paused frames)
+    // Update running stats (skip paused frames for averages)
     if (!paused)
     {
         s_sumTotal += totalMs;
@@ -170,16 +250,18 @@ static void mainLoop_hook(GameWorld* self, float time)
     if (gameSpeed > s_maxGameSpeed) s_maxGameSpeed = gameSpeed;
     if (!paused && totalMs > 16.6f) ++s_spikeCount;
     if (!paused && totalMs > 33.3f) ++s_bigSpikeCount;
+    s_totalCharsSpawned += s_charsSpawnedThisFrame;
+    s_totalSquadsSpawned += s_squadsSpawnedThisFrame;
+    s_totalPlatoonsActivated += s_platoonsActivatedThisFrame;
+    s_totalTerrainLoads += s_terrainLoadsThisFrame;
 
     // Update overlay
     PerfOverlay::Update(totalMs, gameLogicMs, spatialMs, (float)s_spatialQueryCount, killListMs, 0, charCount);
     PerfOverlay::CheckToggleKey();
 
-    // Write periodic summary every 1000 frames (survives crashes)
+    // Periodic summary every 1000 frames
     if (s_frameCount > 0 && s_frameCount % 1000 == 0)
-    {
         Profiling::WriteSummary();
-    }
 
     ++s_frameCount;
 }
@@ -199,7 +281,10 @@ void Profiling::Init()
         s_csvFile.open(path);
         if (s_csvFile.is_open())
         {
-            s_csvFile << "frame,total_ms,gameLogic_ms,spatialQuery_ms,spatialQuery_count,killList_ms,char_count,game_speed,paused,cam_x,cam_y,cam_z\n";
+            s_csvFile << "frame,total_ms,gameLogic_ms,spatialQuery_ms,spatialQuery_count,"
+                      << "killList_ms,char_count,game_speed,paused,"
+                      << "chars_spawned,squads_spawned,platoons_activated,terrain_loads,chars_added,"
+                      << "cam_x,cam_y,cam_z\n";
             DebugLog("[KenshiPerfMod] Profiling enabled, writing to " + path);
         }
         else
@@ -234,57 +319,53 @@ void Profiling::WriteSummary()
 
     f << "=== KenshiPerfMod Profiling Summary ===\n";
     f << "Total frames:    " << s_frameCount << "\n";
-    f << "Active frames:   " << s_activeFrameCount << " (paused frames excluded from averages)\n";
+    f << "Active frames:   " << s_activeFrameCount << " (paused excluded)\n";
     f << "Max characters:  " << s_maxCharCount << "\n";
     f << "Max game speed:  " << s_maxGameSpeed << "x\n";
     f << "\n";
 
-    f << "--- Frame Time (active frames only) ---\n";
+    f << "--- Frame Time ---\n";
     f << "  Average: " << avgTotal << " ms (" << avgFps << " fps)\n";
     f << "  Worst:   " << s_maxTotal << " ms\n";
-    f << "  Below 60fps: " << s_spikeCount << " frames (" << ((float)s_spikeCount / frames * 100.0f) << "%)\n";
-    f << "  Below 30fps: " << s_bigSpikeCount << " frames (" << ((float)s_bigSpikeCount / frames * 100.0f) << "%)\n";
+    f << "  Below 60fps: " << s_spikeCount << " (" << ((float)s_spikeCount / frames * 100.0f) << "%)\n";
+    f << "  Below 30fps: " << s_bigSpikeCount << " (" << ((float)s_bigSpikeCount / frames * 100.0f) << "%)\n";
     f << "\n";
 
-    f << "--- Spatial Queries (Phase 1 target) ---\n";
+    f << "--- Spatial Queries (Phase 1) ---\n";
     f << "  Total calls:     " << s_totalSpatialQueries << "\n";
     f << "  Avg calls/frame: " << avgSpatialCount << "\n";
-    f << "  Avg time/frame:  " << avgSpatial << " ms (" << spatialPct << "% of frame)\n";
+    f << "  Avg time/frame:  " << avgSpatial << " ms (" << spatialPct << "%)\n";
     f << "  Worst frame:     " << s_maxSpatialQueryFrame << " ms\n";
     if (spatialPct > 10.0)
-        f << "  >> HIGH IMPACT: Spatial grid (Phase 1) will significantly help.\n";
+        f << "  >> HIGH: Spatial grid will significantly help.\n";
     else if (spatialPct > 2.0)
-        f << "  >> Moderate: Spatial grid (Phase 1) will help.\n";
+        f << "  >> Moderate: Spatial grid will help.\n";
     else
-        f << "  >> Low: Spatial queries are not a major bottleneck.\n";
+        f << "  >> Low: Not a major bottleneck.\n";
     f << "\n";
 
-    f << "--- Character Updates (Phase 2-4 target) ---\n";
-    f << "  Characters loaded: " << s_maxCharCount << "\n";
-    f << "  NOTE: Character update time cannot be isolated (function is inlined).\n";
-    f << "  Total frame time scales with character count.\n";
-    f << "  At " << s_maxCharCount << " characters, avg frame is " << avgTotal << " ms.\n";
+    f << "--- Character Updates (Phase 2-4) ---\n";
+    f << "  Max characters: " << s_maxCharCount << "\n";
     if (s_maxCharCount > 0)
-        f << "  Per-character estimate: " << (avgTotal / s_maxCharCount * 1000.0) << " us/char\n";
+        f << "  Per-char estimate: " << (avgTotal / s_maxCharCount * 1000.0) << " us/char\n";
     f << "\n";
 
-    f << "--- Spikes (Phase 5 target) ---\n";
+    f << "--- Zone Loading ---\n";
+    f << "  Platoons activated: " << s_totalPlatoonsActivated << "\n";
+    f << "  Characters spawned: " << s_totalCharsSpawned << "\n";
+    f << "  Squads spawned:     " << s_totalSquadsSpawned << "\n";
+    f << "  Terrain loads:      " << s_totalTerrainLoads << "\n";
+    if (s_totalPlatoonsActivated > 0)
+        f << "  Avg chars/platoon:  " << ((float)s_totalCharsSpawned / s_totalPlatoonsActivated) << "\n";
+    if (s_bigSpikeCount > 0 && s_totalPlatoonsActivated > 0)
+        f << "  >> Zone loading causes " << s_bigSpikeCount << " severe spikes. Spreading entity creation will help.\n";
+    f << "\n";
+
+    f << "--- Spikes (Phase 5) ---\n";
     if (s_bigSpikeCount > 0)
-        f << "  " << s_bigSpikeCount << " frames exceeded 33ms. Daily update spreading will help.\n";
+        f << "  " << s_bigSpikeCount << " frames exceeded 33ms.\n";
     else
-        f << "  No severe spikes detected.\n";
-    f << "\n";
-
-    f << "--- What hooks are working ---\n";
-    f << "  mainLoop_GPUSensitiveStuff: YES (total frame time)\n";
-    f << "  getObjectsWithinSphere:     YES (spatial query timing)\n";
-    f << "  getCharactersWithinSphere:  YES (spatial query timing)\n";
-    f << "  processKillList:            YES\n";
-    f << "  charsUpdate:                NO (inlined by compiler)\n";
-    f << "  charsUpdateUT:              NO (inlined by compiler)\n";
-    f << "  processSysMessages:         NO (inlined by compiler)\n";
-    f << "  dailyUpdates:               NO (inlined by compiler)\n";
-    f << "  Character::update:          UNSAFE (crashes on hook)\n";
+        f << "  No severe spikes.\n";
     f << "\n";
 
     f << "Raw data: " << PerfSettings::GetProfileOutputPath() << "\n";
@@ -312,13 +393,13 @@ void Profiling::InstallHooks()
 
     KenshiLib::HookStatus status;
 
-    // Main frame loop (works - this is our primary timing source)
+    // Main frame loop
     status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff),
         (void*)mainLoop_hook, (void**)&mainLoop_orig);
     PerfLog::InfoF("Hook mainLoop: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
-    // Spatial queries - Phase 1 decision data
+    // Spatial queries
     status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::getObjectsWithinSphere),
         (void*)getObjectsWithinSphere_hook, (void**)&getObjectsWithinSphere_orig);
@@ -329,18 +410,40 @@ void Profiling::InstallHooks()
         (void*)getCharactersWithinSphere_hook, (void**)&getCharactersWithinSphere_orig);
     PerfLog::InfoF("Hook getCharactersWithinSphere: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
-    // processKillList (confirmed working)
+    // Kill list
     status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&GameWorld::processKillList),
         (void*)processKillList_hook, (void**)&processKillList_orig);
     PerfLog::InfoF("Hook processKillList: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
-    // NOTE: The following cannot be hooked (inlined or unsafe):
-    // - charsUpdate, charsUpdateUT, processSysMessages, dailyUpdates (inlined)
-    // - Character::update (prologue too short, crashes MinHook)
-    // - Town::update, Building::update (likely same issue)
-    // We measure these indirectly through total frame time.
-    PerfLog::Info("Inlined functions skipped. Using frame subtraction for estimates.");
+    // Zone loading: character spawning
+    status = KenshiLib::AddHook(
+        (void*)KenshiLib::GetRealAddress(&RootObjectFactory::createRandomCharacter),
+        (void*)createRandomCharacter_hook, (void**)&createRandomCharacter_orig);
+    PerfLog::InfoF("Hook createRandomCharacter: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
+
+    status = KenshiLib::AddHook(
+        (void*)KenshiLib::GetRealAddress(&RootObjectFactory::createRandomSquad),
+        (void*)createRandomSquad_hook, (void**)&createRandomSquad_orig);
+    PerfLog::InfoF("Hook createRandomSquad: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
+
+    // Zone loading: platoon activation
+    status = KenshiLib::AddHook(
+        (void*)KenshiLib::GetRealAddress(&Platoon::activate),
+        (void*)platoonActivate_hook, (void**)&platoonActivate_orig);
+    PerfLog::InfoF("Hook Platoon::activate: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
+
+    // Zone loading: character registration
+    status = KenshiLib::AddHook(
+        (void*)KenshiLib::GetRealAddress(&GameWorld::addToUpdateListMain),
+        (void*)addToUpdateListMain_hook, (void**)&addToUpdateListMain_orig);
+    PerfLog::InfoF("Hook addToUpdateListMain: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
+
+    // Zone loading: terrain physics
+    status = KenshiLib::AddHook(
+        (void*)KenshiLib::GetRealAddress(&PhysicsInterface::loadTerrain),
+        (void*)loadTerrain_hook, (void**)&loadTerrain_orig);
+    PerfLog::InfoF("Hook loadTerrain: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
     DebugLog("[KenshiPerfMod] Profiling hooks installed");
 }
