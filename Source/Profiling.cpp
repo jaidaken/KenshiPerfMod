@@ -105,6 +105,17 @@ static void mainLoop_hook(GameWorld* self, float time)
             s_csvFile.flush();
     }
 
+    // Update running stats for summary report
+    s_sumTotal += totalMs;
+    s_sumChars += charsMs;
+    s_sumCharsUT += charsUTMs;
+    s_sumSysMsg += sysMsgMs;
+    s_sumKillList += killListMs;
+    if (totalMs > s_maxTotal) s_maxTotal = totalMs;
+    if (charsMs > s_maxChars) s_maxChars = charsMs;
+    if (charCount > s_maxCharCount) s_maxCharCount = charCount;
+    if (totalMs > 16.6f) ++s_spikeCount;
+
     // Update overlay (main thread, safe for MyGUI)
     PerfOverlay::Update(totalMs, charsMs, charsUTMs, sysMsgMs, killListMs, dailyMs, charCount);
     PerfOverlay::CheckToggleKey();
@@ -196,8 +207,75 @@ void Profiling::Init()
     }
 }
 
+// Running stats for summary report
+static double s_sumTotal = 0, s_sumChars = 0, s_sumCharsUT = 0, s_sumSysMsg = 0, s_sumKillList = 0;
+static float s_maxTotal = 0, s_maxChars = 0;
+static int s_maxCharCount = 0;
+static int s_spikeCount = 0; // frames > 16.6ms (below 60fps)
+
+static void WriteSummaryReport()
+{
+    if (s_frameCount == 0)
+        return;
+
+    std::string path = PerfSettings::GetProfileOutputPath();
+    // Replace .csv with _summary.txt
+    size_t dot = path.rfind('.');
+    std::string summaryPath = (dot != std::string::npos)
+        ? path.substr(0, dot) + "_summary.txt"
+        : path + "_summary.txt";
+
+    std::ofstream f(summaryPath);
+    if (!f.is_open())
+        return;
+
+    double avgTotal = s_sumTotal / s_frameCount;
+    double avgChars = s_sumChars / s_frameCount;
+    double avgCharsUT = s_sumCharsUT / s_frameCount;
+    double avgSysMsg = s_sumSysMsg / s_frameCount;
+    double avgKillList = s_sumKillList / s_frameCount;
+    double avgFps = (avgTotal > 0.001) ? (1000.0 / avgTotal) : 0;
+    double charsPct = (avgTotal > 0.001) ? (avgChars / avgTotal * 100.0) : 0;
+
+    f << "=== KenshiPerfMod Profiling Summary ===" << "\n";
+    f << "\n";
+    f << "Total frames recorded: " << s_frameCount << "\n";
+    f << "Max characters loaded: " << s_maxCharCount << "\n";
+    f << "\n";
+    f << "--- Average Frame Breakdown ---" << "\n";
+    f << "  Total frame:       " << avgTotal << " ms (" << avgFps << " fps)" << "\n";
+    f << "  charsUpdate:       " << avgChars << " ms (" << charsPct << "% of frame)" << "\n";
+    f << "  charsUpdateUT:     " << avgCharsUT << " ms" << "\n";
+    f << "  processSysMessages:" << avgSysMsg << " ms" << "\n";
+    f << "  processKillList:   " << avgKillList << " ms" << "\n";
+    f << "\n";
+    f << "--- Worst Frames ---" << "\n";
+    f << "  Worst total frame: " << s_maxTotal << " ms" << "\n";
+    f << "  Worst charsUpdate: " << s_maxChars << " ms" << "\n";
+    f << "  Frames below 60fps:" << s_spikeCount << " (" << ((float)s_spikeCount / s_frameCount * 100.0f) << "%)" << "\n";
+    f << "\n";
+    f << "--- Analysis ---" << "\n";
+    if (charsPct > 50.0)
+        f << "  ** charsUpdate dominates frame time (" << charsPct << "%). Phases 2-4 (simulation LOD, parallel updates) will have high impact." << "\n";
+    else if (charsPct > 20.0)
+        f << "  charsUpdate is significant (" << charsPct << "%). Phases 2-4 will help." << "\n";
+    else
+        f << "  charsUpdate is small (" << charsPct << "%). Bottleneck may be elsewhere (rendering, physics, etc)." << "\n";
+
+    if (s_spikeCount > s_frameCount * 0.05)
+        f << "  ** High spike rate (" << s_spikeCount << " frames). Daily update spreading (Phase 5) and simulation LOD (Phase 2) will help." << "\n";
+
+    f << "\n";
+    f << "Raw data: " << PerfSettings::GetProfileOutputPath() << "\n";
+
+    f.close();
+    PerfLog::InfoF("Summary report written to %s", summaryPath.c_str());
+}
+
 void Profiling::Shutdown()
 {
+    WriteSummaryReport();
+
     if (s_csvFile.is_open())
     {
         s_csvFile.flush();
