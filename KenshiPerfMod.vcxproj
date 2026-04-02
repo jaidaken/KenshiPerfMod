@@ -114,6 +114,7 @@
     <ClCompile Include="Source\ThreadPool.cpp" />
     <ClCompile Include="Source\TLSMessageQueue.cpp" />
     <ClCompile Include="Source\Profiling.cpp" />
+    <ClCompile Include="Source\SpawnThrottle.cpp" />
   </ItemGroup>
   <!-- Header files -->
   <ItemGroup>
@@ -123,6 +124,7 @@
     <ClInclude Include="Source\ThreadPool.h" />
     <ClInclude Include="Source\TLSMessageQueue.h" />
     <ClInclude Include="Source\Profiling.h" />
+    <ClInclude Include="Source\SpawnThrottle.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
