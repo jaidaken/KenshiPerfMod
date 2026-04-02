@@ -2,14 +2,20 @@
 #include "Log.h"
 #include "Settings.h"
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+
 #include <kenshi/GameWorld.h>
 #include <kenshi/Globals.h>
-#include <kenshi/gui/MainBarGUI.h>
 #include <core/Functions.h>
 
 #include <mygui/MyGUI.h>
 
 #include <cstdio>
+
+// Forward declare - avoid pulling in the full MainBarGUI.h which has header ordering issues
+class MainBarGUI;
 
 static MyGUI::TextBox* s_overlayText = NULL;
 static bool s_visible = false;
@@ -51,36 +57,21 @@ static void CreateOverlayWidget()
     }
 }
 
-// Hook MainBarGUI constructor to know when the in-game UI is ready
-static MainBarGUI* (*MainBarGUI_ctor_orig)(MainBarGUI*) = NULL;
-static MainBarGUI* MainBarGUI_ctor_hook(MainBarGUI* thisptr)
-{
-    MainBarGUI* result = MainBarGUI_ctor_orig(thisptr);
-
-    if (!s_initialized)
-    {
-        CreateOverlayWidget();
-    }
-
-    return result;
-}
-
 void PerfOverlay::Init()
 {
     if (!PerfSettings::GetEnableProfiling())
         return;
 
-    KenshiLib::AddHook(
-        (void*)KenshiLib::GetRealAddress(&MainBarGUI::_CONSTRUCTOR),
-        (void*)MainBarGUI_ctor_hook,
-        (void**)&MainBarGUI_ctor_orig);
-
-    PerfLog::Info("Overlay hook installed (waiting for in-game UI)");
+    PerfLog::Info("Overlay will be created on first update");
 }
 
 void PerfOverlay::Update(float totalMs, float charsMs, float charsUTMs, float sysMsgMs, float killListMs, float dailyMs, int charCount)
 {
-    if (!s_initialized || !s_overlayText || !s_visible)
+    // Lazy init - create widget on first call (MyGUI is ready by now)
+    if (!s_initialized)
+        CreateOverlayWidget();
+
+    if (!s_overlayText || !s_visible)
         return;
 
     // Update rolling average
