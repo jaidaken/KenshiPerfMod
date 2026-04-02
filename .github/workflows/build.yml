@@ -64,15 +64,28 @@ jobs:
         if: steps.cache-boost.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          Write-Host "Downloading Boost 1.60.0 for MSVC 10.0 x64..."
-          Invoke-WebRequest `
-            -Uri "https://sourceforge.net/projects/boost/files/boost-binaries/1.60.0/boost_1_60_0-msvc-10.0-64.exe/download" `
-            -OutFile boost_installer.exe `
-            -UseBasicParsing
-          Write-Host "Installing Boost..."
-          Start-Process -Wait -FilePath ".\boost_installer.exe" `
-            -ArgumentList "/SILENT","/SP-","/SUPPRESSMSGBOXES","/DIR=C:\boost_1_60_0"
-          Write-Host "Boost installed to C:\boost_1_60_0"
+          Write-Host "Downloading Boost 1.60.0 source for headers..."
+          # SourceForge NSIS installer is unreliable in CI (redirects break downloads).
+          # Download source archive from archives.boost.io for headers,
+          # and build the two libs we need (system + thread) with the v100 compiler.
+          aria2c -x 16 -s 16 -k 1M -o boost_src.7z "https://archives.boost.io/release/1.60.0/source/boost_1_60_0.7z"
+          7z x boost_src.7z -oC:\ -y
+          Rename-Item "C:\boost_1_60_0" "C:\boost_1_60_0_src"
+
+          Write-Host "Building Boost.System and Boost.Thread for MSVC 10.0 x64..."
+          Push-Location "C:\boost_1_60_0_src"
+          & cmd /c "call `"C:\Program Files\Microsoft SDKs\Windows\v7.1\Bin\SetEnv.cmd`" /x64 /Release 2>nul && bootstrap.bat"
+          & cmd /c "call `"C:\Program Files\Microsoft SDKs\Windows\v7.1\Bin\SetEnv.cmd`" /x64 /Release 2>nul && b2 toolset=msvc-10.0 address-model=64 variant=release link=static threading=multi --with-system --with-thread --with-date_time --with-chrono --with-atomic --stagedir=stage/lib -j4"
+          Pop-Location
+
+          # Set up the expected directory structure
+          New-Item -ItemType Directory -Force -Path "C:\boost_1_60_0"
+          # Headers
+          Copy-Item "C:\boost_1_60_0_src\boost" "C:\boost_1_60_0\boost" -Recurse
+          # Libs
+          New-Item -ItemType Directory -Force -Path "C:\boost_1_60_0\stage\lib"
+          Copy-Item "C:\boost_1_60_0_src\stage\lib\lib\*" "C:\boost_1_60_0\stage\lib\" -Force
+          Write-Host "Boost ready at C:\boost_1_60_0"
 
       # --- KenshiLib.lib (prebuilt from release) ---
 
