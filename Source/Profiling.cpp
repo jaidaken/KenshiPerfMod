@@ -49,6 +49,8 @@ static int s_bigSpikeCount = 0;   // frames > 33.3ms
 static double s_sumSpatialQuery = 0;
 static int s_totalSpatialQueries = 0;
 static float s_maxSpatialQueryFrame = 0;
+static int s_activeFrameCount = 0; // non-paused frames
+static float s_maxGameSpeed = 0;
 
 // ============================================================
 // Hook originals
@@ -116,15 +118,24 @@ static void mainLoop_hook(GameWorld* self, float time)
     float totalMs = (float)TicksToMs(frameTotal);
     float spatialMs = (float)TicksToMs(s_spatialQueryAccum);
     float killListMs = (float)TicksToMs(s_killListAccum);
-
-    // Game logic estimate: total minus spatial queries and kill list
-    // (spatial queries are PART of game logic, but we want them separate for Phase 1)
     float gameLogicMs = totalMs - killListMs;
 
-    // Character count
+    // Read game state (no hooks needed - just reading memory)
     int charCount = 0;
+    float gameSpeed = 0;
+    bool paused = false;
+    float camX = 0, camY = 0, camZ = 0;
+
     if (ou && ou->initialized)
+    {
         charCount = (int)ou->getCharacterUpdateList().size();
+        gameSpeed = ou->frameSpeedMult;
+        paused = ou->paused;
+        Ogre::Vector3 camPos = ou->getCameraPos();
+        camX = camPos.x;
+        camY = camPos.y;
+        camZ = camPos.z;
+    }
 
     // Write CSV
     if (s_csvFile.is_open())
@@ -136,21 +147,29 @@ static void mainLoop_hook(GameWorld* self, float time)
             << spatialMs << ","
             << s_spatialQueryCount << ","
             << killListMs << ","
-            << charCount << "\n";
+            << charCount << ","
+            << gameSpeed << ","
+            << (paused ? 1 : 0) << ","
+            << camX << "," << camY << "," << camZ << "\n";
 
         if (s_frameCount % 300 == 0)
             s_csvFile.flush();
     }
 
-    // Update running stats
-    s_sumTotal += totalMs;
-    s_sumSpatialQuery += spatialMs;
-    s_totalSpatialQueries += s_spatialQueryCount;
+    // Update running stats (skip paused frames)
+    if (!paused)
+    {
+        s_sumTotal += totalMs;
+        s_sumSpatialQuery += spatialMs;
+        s_totalSpatialQueries += s_spatialQueryCount;
+        ++s_activeFrameCount;
+    }
     if (totalMs > s_maxTotal) s_maxTotal = totalMs;
     if (spatialMs > s_maxSpatialQueryFrame) s_maxSpatialQueryFrame = spatialMs;
     if (charCount > s_maxCharCount) s_maxCharCount = charCount;
-    if (totalMs > 16.6f) ++s_spikeCount;
-    if (totalMs > 33.3f) ++s_bigSpikeCount;
+    if (gameSpeed > s_maxGameSpeed) s_maxGameSpeed = gameSpeed;
+    if (!paused && totalMs > 16.6f) ++s_spikeCount;
+    if (!paused && totalMs > 33.3f) ++s_bigSpikeCount;
 
     // Update overlay
     PerfOverlay::Update(totalMs, gameLogicMs, spatialMs, (float)s_spatialQueryCount, killListMs, 0, charCount);
@@ -180,7 +199,7 @@ void Profiling::Init()
         s_csvFile.open(path);
         if (s_csvFile.is_open())
         {
-            s_csvFile << "frame,total_ms,gameLogic_ms,spatialQuery_ms,spatialQuery_count,killList_ms,char_count\n";
+            s_csvFile << "frame,total_ms,gameLogic_ms,spatialQuery_ms,spatialQuery_count,killList_ms,char_count,game_speed,paused,cam_x,cam_y,cam_z\n";
             DebugLog("[KenshiPerfMod] Profiling enabled, writing to " + path);
         }
         else
@@ -206,22 +225,25 @@ void Profiling::WriteSummary()
     if (!f.is_open())
         return;
 
-    double avgTotal = s_sumTotal / s_frameCount;
+    int frames = s_activeFrameCount > 0 ? s_activeFrameCount : 1;
+    double avgTotal = s_sumTotal / frames;
     double avgFps = (avgTotal > 0.001) ? (1000.0 / avgTotal) : 0;
-    double avgSpatial = s_sumSpatialQuery / s_frameCount;
-    double avgSpatialCount = (double)s_totalSpatialQueries / s_frameCount;
+    double avgSpatial = s_sumSpatialQuery / frames;
+    double avgSpatialCount = (double)s_totalSpatialQueries / frames;
     double spatialPct = (s_sumTotal > 0.001) ? (s_sumSpatialQuery / s_sumTotal * 100.0) : 0;
 
     f << "=== KenshiPerfMod Profiling Summary ===\n";
-    f << "Frames recorded: " << s_frameCount << "\n";
+    f << "Total frames:    " << s_frameCount << "\n";
+    f << "Active frames:   " << s_activeFrameCount << " (paused frames excluded from averages)\n";
     f << "Max characters:  " << s_maxCharCount << "\n";
+    f << "Max game speed:  " << s_maxGameSpeed << "x\n";
     f << "\n";
 
-    f << "--- Frame Time ---\n";
+    f << "--- Frame Time (active frames only) ---\n";
     f << "  Average: " << avgTotal << " ms (" << avgFps << " fps)\n";
     f << "  Worst:   " << s_maxTotal << " ms\n";
-    f << "  Below 60fps: " << s_spikeCount << " frames (" << ((float)s_spikeCount / s_frameCount * 100.0f) << "%)\n";
-    f << "  Below 30fps: " << s_bigSpikeCount << " frames (" << ((float)s_bigSpikeCount / s_frameCount * 100.0f) << "%)\n";
+    f << "  Below 60fps: " << s_spikeCount << " frames (" << ((float)s_spikeCount / frames * 100.0f) << "%)\n";
+    f << "  Below 30fps: " << s_bigSpikeCount << " frames (" << ((float)s_bigSpikeCount / frames * 100.0f) << "%)\n";
     f << "\n";
 
     f << "--- Spatial Queries (Phase 1 target) ---\n";
