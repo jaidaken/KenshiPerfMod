@@ -20,6 +20,12 @@ static std::ofstream s_csvFile;
 static LARGE_INTEGER s_freq;
 static int s_frameCount = 0;
 
+// Running stats for summary report
+static double s_sumTotal = 0, s_sumChars = 0, s_sumCharsUT = 0, s_sumSysMsg = 0, s_sumKillList = 0;
+static float s_maxTotal = 0, s_maxChars = 0;
+static int s_maxCharCount = 0;
+static int s_spikeCount = 0; // frames > 16.6ms (below 60fps)
+
 // Per-frame timing data (in QPC ticks)
 struct FrameTiming
 {
@@ -206,12 +212,6 @@ void Profiling::Init()
         }
     }
 }
-
-// Running stats for summary report
-static double s_sumTotal = 0, s_sumChars = 0, s_sumCharsUT = 0, s_sumSysMsg = 0, s_sumKillList = 0;
-static float s_maxTotal = 0, s_maxChars = 0;
-static int s_maxCharCount = 0;
-static int s_spikeCount = 0; // frames > 16.6ms (below 60fps)
 
 static void WriteSummaryReport()
 {
