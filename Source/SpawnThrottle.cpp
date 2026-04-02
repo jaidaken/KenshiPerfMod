@@ -7,101 +7,107 @@
 #include <Windows.h>
 
 #include <kenshi/RootObjectFactory.h>
+#include <kenshi/Platoon.h>
 #include <kenshi/GameWorld.h>
 #include <kenshi/Globals.h>
 #include <core/Functions.h>
 
+#include <deque>
+#include <boost/thread/mutex.hpp>
 #include <boost/thread/lock_guard.hpp>
 
-// The idea: RootObjectFactory::mainThreadUpdate() processes its ENTIRE todoList
-// deque in one frame. When a zone loads, 200+ characters get queued and all
-// processed at once, causing 280-560ms hitches.
+// Profiling showed Platoon::activate() triggers batch character creation:
+// Frame 989: 8 platoons -> 201 chars -> 260ms
+// Frame 2591: 17 platoons -> 90 chars -> 468ms
 //
-// We hook mainThreadUpdate() and replace it with a throttled version that
-// processes at most N items per frame. The rest stay in the deque for next frame.
-//
-// Dynamic budget: if the frame is fast, process more. If slow, process fewer.
-// This adapts to the player's hardware.
+// Strategy: hook Platoon::activate(). Allow N platoons per frame.
+// Defer the rest to subsequent frames via mainThreadUpdate hook.
+// This keeps each platoon's internal state consistent (either fully
+// activated or waiting) while spreading the load.
 
-static void (*mainThreadUpdate_orig)(RootObjectFactory*) = NULL;
-
-// We need access to the private process() method. Since we can't call it through
-// the class (it's private), we store a function pointer resolved from the RVA.
-typedef RootObjectBase* (*ProcessFn)(RootObjectFactory*, RootObjectFactory::CreatelistItem*);
-static ProcessFn s_processFunc = NULL;
-
-// Frame time tracking for dynamic budget
-static LARGE_INTEGER s_freq;
+static std::deque<Platoon*> s_deferredPlatoons;
+static boost::mutex s_deferredMutex;
+static int s_activatedThisFrame = 0;
 static float s_lastFrameMs = 0;
 
-static void mainThreadUpdate_hook(RootObjectFactory* self)
+static LARGE_INTEGER s_freq;
+
+// Originals
+static void (*platoonActivate_orig)(Platoon*) = NULL;
+static void (*mainThreadUpdate_orig)(RootObjectFactory*) = NULL;
+
+static int GetBudget()
 {
-    if (!PerfSettings::GetEnableSpawnThrottling())
-    {
-        mainThreadUpdate_orig(self);
-        return;
-    }
+    int max = PerfSettings::GetMaxSpawnsPerFrame();
 
-    // Access todoList via known offsets
-    // todoMutex at offset 0x0, todoList at offset 0x20
-    boost::shared_mutex& mutex = self->todoMutex;
-    std::deque<RootObjectFactory::CreatelistItem*>& todoList = self->todoList;
-
-    // Take the lock
-    boost::lock_guard<boost::shared_mutex> lock(mutex);
-
-    if (todoList.empty())
-        return;
-
-    int queueSize = (int)todoList.size();
-
-    // Dynamic budget: target 8ms max for spawning per frame
-    // At ~1.3ms per character (from profiling), 8ms = ~6 characters
-    // But if last frame was fast, allow more
-    int maxPerFrame = PerfSettings::GetMaxSpawnsPerFrame();
-
-    // Dynamic: if frame was under 8ms, allow full budget. If over 16ms, reduce.
+    // Dynamic budget based on last frame time
+    // At ~1.3ms per character and ~6 chars per platoon, each platoon costs ~8ms
     if (s_lastFrameMs < 8.0f)
-        maxPerFrame = maxPerFrame * 2;  // lots of headroom, process faster
+        max = max * 2;    // headroom, go faster
     else if (s_lastFrameMs > 16.0f)
-        maxPerFrame = maxPerFrame / 2;  // already slow, be conservative
+        max = max / 2;    // slow frame, be conservative
 
-    if (maxPerFrame < 5)
-        maxPerFrame = 5;  // always process at least 5
+    if (max < 2)
+        max = 2;
 
-    int toProcess = queueSize;
-    if (toProcess > maxPerFrame)
-        toProcess = maxPerFrame;
-
-    // Process N items from the front of the deque
-    LARGE_INTEGER batchStart, batchEnd;
-    QueryPerformanceCounter(&batchStart);
-
-    for (int i = 0; i < toProcess; ++i)
-    {
-        if (todoList.empty())
-            break;
-
-        RootObjectFactory::CreatelistItem* item = todoList.front();
-        todoList.pop_front();
-
-        // Call the private process() method via resolved function pointer
-        if (s_processFunc)
-            s_processFunc(self, item);
-    }
-
-    QueryPerformanceCounter(&batchEnd);
-    float batchMs = (float)((double)(batchEnd.QuadPart - batchStart.QuadPart) * 1000.0 / (double)s_freq.QuadPart);
-
-    int remaining = (int)todoList.size();
-    if (remaining > 0)
-    {
-        PerfLog::InfoF("SpawnThrottle: processed %d/%d items (%.1fms), %d remaining",
-            toProcess, queueSize, batchMs, remaining);
-    }
+    return max;
 }
 
-// Called from the profiler's main loop hook to track frame time for dynamic budget
+static void platoonActivate_hook(Platoon* self)
+{
+    int budget = GetBudget();
+
+    if (s_activatedThisFrame < budget)
+    {
+        ++s_activatedThisFrame;
+        platoonActivate_orig(self);
+        return;
+    }
+
+    // Over budget - defer to next frame
+    boost::lock_guard<boost::mutex> lock(s_deferredMutex);
+    s_deferredPlatoons.push_back(self);
+
+    PerfLog::InfoF("SpawnThrottle: deferred platoon (budget %d, queued %d)",
+        budget, (int)s_deferredPlatoons.size());
+}
+
+// Process deferred platoons at the start of each frame
+static void mainThreadUpdate_hook(RootObjectFactory* self)
+{
+    // Reset per-frame counter
+    s_activatedThisFrame = 0;
+
+    // Process deferred platoons
+    if (!s_deferredPlatoons.empty())
+    {
+        int budget = GetBudget();
+        int processed = 0;
+
+        boost::lock_guard<boost::mutex> lock(s_deferredMutex);
+
+        while (!s_deferredPlatoons.empty() && processed < budget)
+        {
+            Platoon* p = s_deferredPlatoons.front();
+            s_deferredPlatoons.pop_front();
+
+            platoonActivate_orig(p);
+            ++processed;
+            ++s_activatedThisFrame;
+        }
+
+        if (processed > 0)
+        {
+            int remaining = (int)s_deferredPlatoons.size();
+            PerfLog::InfoF("SpawnThrottle: activated %d deferred platoons, %d remaining",
+                processed, remaining);
+        }
+    }
+
+    // Run original mainThreadUpdate
+    mainThreadUpdate_orig(self);
+}
+
 void SpawnThrottle_UpdateFrameTime(float frameMs)
 {
     s_lastFrameMs = frameMs;
@@ -117,29 +123,24 @@ void SpawnThrottle::Init()
 
     QueryPerformanceFrequency(&s_freq);
 
-    // Resolve the private process() function via game base + RVA
-    HMODULE gameModule = GetModuleHandleA("kenshi_x64.exe");
-    if (!gameModule)
-        gameModule = GetModuleHandleA("kenshi_GOG_x64.exe");
+    KenshiLib::HookStatus status;
 
-    if (gameModule)
-    {
-        s_processFunc = (ProcessFn)((intptr_t)gameModule + 0x580FF0);
-        PerfLog::InfoF("SpawnThrottle: process() resolved to 0x%llX", (intptr_t)s_processFunc);
-    }
-    else
-    {
-        PerfLog::Error("SpawnThrottle: could not find game module");
-        return;
-    }
+    // Hook Platoon::activate - throttle how many platoons activate per frame
+    status = KenshiLib::AddHook(
+        (void*)KenshiLib::GetRealAddress(&Platoon::activate),
+        (void*)platoonActivate_hook,
+        (void**)&platoonActivate_orig);
+    PerfLog::InfoF("SpawnThrottle: hook Platoon::activate %s",
+        status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
-    // Hook mainThreadUpdate
-    KenshiLib::HookStatus status = KenshiLib::AddHook(
+    // Hook mainThreadUpdate to process deferred platoons each frame
+    status = KenshiLib::AddHook(
         (void*)KenshiLib::GetRealAddress(&RootObjectFactory::mainThreadUpdate),
         (void*)mainThreadUpdate_hook,
         (void**)&mainThreadUpdate_orig);
+    PerfLog::InfoF("SpawnThrottle: hook mainThreadUpdate %s",
+        status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
-    PerfLog::InfoF("SpawnThrottle: hook mainThreadUpdate %s (max %d/frame)",
-        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
+    PerfLog::InfoF("SpawnThrottle: enabled (max %d platoons/frame, dynamic)",
         PerfSettings::GetMaxSpawnsPerFrame());
 }
