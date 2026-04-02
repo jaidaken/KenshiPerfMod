@@ -98,16 +98,18 @@ void PerfOverlay::Update(float totalMs, float gameLogicMs, float spatialMs, floa
             charsSpawned, platoonsActivated);
     }
 
+    float logicMs = totalMs;   // totalMs = time inside mainLoop = game logic
+    float renderMs = gameLogicMs; // repurposed param = render time
+    float wallMs = logicMs + renderMs;
+
     sprintf(buf,
         "KenshiPerfMod  [F12 hide]\n"
-        "FPS: %.0f (%.1f ms) Speed: %.0fx\n"
-        "Characters: %d\n"
-        "%s"
-        "Frame: %.1f ms | KillList: %.2f ms",
-        fps, totalMs, gameSpeed,
-        charCount,
-        spawnLine,
-        gameLogicMs, killListMs);
+        "FPS: %.0f  Speed: %.0fx  Chars: %d\n"
+        "Logic: %.1f ms | Render: %.1f ms | Wall: %.1f ms\n"
+        "%s",
+        fps, gameSpeed, charCount,
+        logicMs, renderMs, wallMs,
+        spawnLine);
 
     s_overlayText->setCaption(buf);
 }
