@@ -356,19 +356,21 @@ void Profiling::InstallHooks()
         status == KenshiLib::SUCCESS ? "OK" : "FAIL",
         KenshiLib::GetRealAddress(&GameWorld::dailyUpdates));
 
-    // The _NV_ symbols resolve to trampoline wrappers, not the actual function bodies.
-    // The real Character::update() is at base + 0x5CE9B0. Derive base from mainLoop address.
-    intptr_t mainLoopAddr = KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff);
-    intptr_t gameBase = mainLoopAddr - 0x7877A0;
-    PerfLog::InfoF("Game base: 0x%llX", gameBase);
+    // Get actual game exe base address from Windows
+    HMODULE gameModule = GetModuleHandleA("kenshi_x64.exe");
+    if (!gameModule)
+        gameModule = GetModuleHandleA("kenshi_GOG_x64.exe");
+    intptr_t gameBase = (intptr_t)gameModule;
+    PerfLog::InfoF("Game exe base: 0x%llX", gameBase);
 
-    intptr_t charUpdateRealAddr = gameBase + 0x5CE9B0;
-    PerfLog::InfoF("Character::update real addr: 0x%llX", charUpdateRealAddr);
+    // Character::update() RVA = 0x5CE9B0 (from Character.h)
+    intptr_t charUpdateAddr = gameBase + 0x5CE9B0;
+    PerfLog::InfoF("Character::update target: 0x%llX", charUpdateAddr);
 
     status = KenshiLib::AddHook(
-        (void*)charUpdateRealAddr,
+        (void*)charUpdateAddr,
         (void*)charUpdate_hook, (void**)&charUpdate_orig);
-    PerfLog::InfoF("Hook Character::update (direct RVA): %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
+    PerfLog::InfoF("Hook Character::update: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
     DebugLog("[KenshiPerfMod] Profiling hooks installed");
 }
