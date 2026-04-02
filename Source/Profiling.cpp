@@ -356,21 +356,19 @@ void Profiling::InstallHooks()
         status == KenshiLib::SUCCESS ? "OK" : "FAIL",
         KenshiLib::GetRealAddress(&GameWorld::dailyUpdates));
 
-    // Hook Character::update() - try multiple approaches since virtual dispatch is tricky
-    // The _NV_ variant should be the actual function body at RVA 0x5CE9B0
-    intptr_t charUpdateAddr = KenshiLib::GetRealAddress(&Character::_NV_update);
-    PerfLog::InfoF("Character::_NV_update resolved to 0x%llX", charUpdateAddr);
+    // The _NV_ symbols resolve to trampoline wrappers, not the actual function bodies.
+    // The real Character::update() is at base + 0x5CE9B0. Derive base from mainLoop address.
+    intptr_t mainLoopAddr = KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff);
+    intptr_t gameBase = mainLoopAddr - 0x7877A0;
+    PerfLog::InfoF("Game base: 0x%llX", gameBase);
 
-    // Also check what the non-_NV_ version resolves to (may differ for virtuals)
-    // GetRealAddress doesn't work with virtuals, so _NV_ is correct.
-    // But let's verify by also trying RootObject::_NV_update to see if it's different
-    intptr_t rootUpdateAddr = KenshiLib::GetRealAddress(&RootObject::_NV_update);
-    PerfLog::InfoF("RootObject::_NV_update resolved to 0x%llX", rootUpdateAddr);
+    intptr_t charUpdateRealAddr = gameBase + 0x5CE9B0;
+    PerfLog::InfoF("Character::update real addr: 0x%llX", charUpdateRealAddr);
 
     status = KenshiLib::AddHook(
-        (void*)charUpdateAddr,
+        (void*)charUpdateRealAddr,
         (void*)charUpdate_hook, (void**)&charUpdate_orig);
-    PerfLog::InfoF("Hook Character::_NV_update: %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
+    PerfLog::InfoF("Hook Character::update (direct RVA): %s", status == KenshiLib::SUCCESS ? "OK" : "FAIL");
 
     DebugLog("[KenshiPerfMod] Profiling hooks installed");
 }
