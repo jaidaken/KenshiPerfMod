@@ -12,9 +12,9 @@ namespace PerfSettings
     std::string GetProfileOutputPath();
     int GetWorkerThreadCount();
 
-    // Phase 1: Spatial Grid
-    bool GetEnableSpatialGrid();
-    float GetGridCellSize();
+    // Phase 1: Spawn Throttling
+    bool GetEnableSpawnThrottling();
+    int GetMaxSpawnsPerFrame();
 
     // Phase 2: Simulation LOD
     bool GetEnableSimulationLOD();
