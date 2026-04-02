@@ -114,13 +114,14 @@ jobs:
         shell: cmd
         env:
           BOOST_INCLUDE_PATH: C:\boost_1_60_0
+          VCInstallDir: C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\
+          WindowsSdkDir: C:\Program Files\Microsoft SDKs\Windows\v7.1\
         run: |
-          :: The Windows7.1SDK toolset needs VC++ 2010 CRT and SDK include/lib paths.
-          :: MSBuild's $(VC_IncludePath) and $(WindowsSDK_IncludePath) don't resolve for v100,
-          :: so we set INCLUDE and LIB env vars which CL.exe reads directly.
+          :: VC++ 2010 CL.exe runtime DLLs and SDK tools on PATH
+          set "PATH=C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin\x86_amd64;C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin;C:\Program Files (x86)\Microsoft Visual Studio 10.0\Common7\IDE;%PATH%"
+          :: INCLUDE/LIB for CL.exe (belt and suspenders with the vcxproj IncludePath)
           set "INCLUDE=C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\include;C:\Program Files\Microsoft SDKs\Windows\v7.1\Include;%INCLUDE%"
           set "LIB=C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\lib\amd64;C:\Program Files\Microsoft SDKs\Windows\v7.1\Lib\x64;%LIB%"
-          set "PATH=C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin\x86_amd64;C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin;C:\Program Files (x86)\Microsoft Visual Studio 10.0\Common7\IDE;%PATH%"
           "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe" KenshiPerfMod.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:normal
 
       # --- Package ---
