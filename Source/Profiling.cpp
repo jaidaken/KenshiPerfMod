@@ -387,7 +387,7 @@ void Profiling::WriteSummary()
     f << "--- Character Updates (Phase 2-4) ---\n";
     f << "  Max characters: " << s_maxCharCount << "\n";
     if (s_maxCharCount > 0)
-        f << "  Per-char estimate: " << (avgTotal / s_maxCharCount * 1000.0) << " us/char\n";
+        f << "  Per-char estimate: " << (avgWall / s_maxCharCount * 1000.0) << " us/char\n";
     f << "\n";
 
     f << "--- Zone Loading ---\n";
@@ -412,7 +412,7 @@ void Profiling::WriteSummary()
     f.close();
 
     PerfLog::InfoF("Summary written (%d frames, %d chars, %.1f avg ms)",
-        s_frameCount, s_maxCharCount, avgTotal);
+        s_frameCount, s_maxCharCount, avgWall);
 }
 
 void Profiling::Shutdown()
