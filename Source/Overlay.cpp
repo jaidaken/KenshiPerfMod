@@ -14,12 +14,10 @@
 
 #include <cstdio>
 
-// Forward declare - avoid pulling in the full MainBarGUI.h which has header ordering issues
-class MainBarGUI;
-
 static MyGUI::TextBox* s_overlayText = NULL;
 static bool s_visible = false;
 static bool s_initialized = false;
+static bool s_createFailed = false;
 
 // Rolling average for smoother display
 static const int AVG_FRAMES = 60;
@@ -31,29 +29,33 @@ static void CreateOverlayWidget()
 {
     MyGUI::Gui* gui = MyGUI::Gui::getInstancePtr();
     if (!gui)
+    {
+        PerfLog::Error("Overlay: MyGUI::Gui instance is null");
+        s_createFailed = true;
         return;
+    }
 
+    // Use Kenshi's own skin for text and the "Info" layer which renders on top of everything
     s_overlayText = gui->createWidget<MyGUI::TextBox>(
-        "TextBox",
-        MyGUI::IntCoord(10, 10, 400, 160),
+        "Kenshi_TextboxStandardText",
+        MyGUI::IntCoord(10, 50, 420, 200),
         MyGUI::Align::Default,
-        "Overlapped",
+        "Info",
         "KenshiPerfMod_Overlay");
 
     if (s_overlayText)
     {
-        s_overlayText->setTextColour(MyGUI::Colour(0.0f, 1.0f, 0.3f));
-        s_overlayText->setFontName("KenshiFont16");
-        s_overlayText->setTextShadow(true);
-        s_overlayText->setCaption("KenshiPerfMod");
-        s_overlayText->setVisible(false);
-        s_visible = false;
+        s_overlayText->setTextColour(MyGUI::Colour(0.2f, 1.0f, 0.4f));
+        s_overlayText->setCaption("KenshiPerfMod - F12 to toggle");
+        s_overlayText->setVisible(true);
+        s_visible = true;
         s_initialized = true;
         PerfLog::Info("Overlay widget created");
     }
     else
     {
-        PerfLog::Error("Failed to create overlay widget");
+        PerfLog::Error("Overlay: createWidget returned null");
+        s_createFailed = true;
     }
 }
 
@@ -67,8 +69,8 @@ void PerfOverlay::Init()
 
 void PerfOverlay::Update(float totalMs, float charsMs, float charsUTMs, float sysMsgMs, float killListMs, float dailyMs, int charCount)
 {
-    // Lazy init - create widget on first call (MyGUI is ready by now)
-    if (!s_initialized)
+    // Lazy init
+    if (!s_initialized && !s_createFailed)
         CreateOverlayWidget();
 
     if (!s_overlayText || !s_visible)
@@ -97,9 +99,9 @@ void PerfOverlay::Update(float totalMs, float charsMs, float charsUTMs, float sy
         "FPS: %.0f (%.1f ms)\n"
         "Characters: %d\n"
         "charsUpdate: %.1f ms (%.0f%%)\n"
-        "charsUpdateUT: %.1f ms\n"
-        "sysMessages: %.1f ms\n"
-        "killList: %.1f ms\n"
+        "charsUpdateUT: %.2f ms\n"
+        "sysMessages: %.2f ms\n"
+        "killList: %.2f ms\n"
         "%s",
         fps, avgTotal,
         charCount,
@@ -127,10 +129,8 @@ bool PerfOverlay::IsVisible()
     return s_visible;
 }
 
-// Called each frame from the profiler main loop hook to check toggle key
 void PerfOverlay::CheckToggleKey()
 {
-    // F12 to toggle overlay
     static bool keyWasDown = false;
     bool keyIsDown = (GetAsyncKeyState(VK_F12) & 0x8000) != 0;
 
