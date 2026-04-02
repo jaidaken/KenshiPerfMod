@@ -8,7 +8,9 @@ namespace PerfOverlay
 
     // Update overlay text with latest profiling data.
     // Called from the main loop hook each frame (main thread only).
-    void Update(float totalMs, float charsMs, float charsUTMs, float sysMsgMs, float killListMs, float dailyMs, int charCount);
+    void Update(float totalMs, float gameLogicMs, float spatialMs, float spatialCount,
+        float killListMs, float charsSpawned, int charCount, float gameSpeed,
+        int platoonsActivated, int terrainLoads);
 
     // Toggle overlay visibility. Can be bound to a hotkey.
     void Toggle();
