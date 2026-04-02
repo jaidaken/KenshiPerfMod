@@ -67,7 +67,7 @@ void PerfOverlay::Init()
     PerfLog::Info("Overlay will be created on first update");
 }
 
-void PerfOverlay::Update(float totalMs, float charsMs, float charsUTMs, float sysMsgMs, float killListMs, float dailyMs, int charCount)
+void PerfOverlay::Update(float totalMs, float gameLogicMs, float spatialMs, float spatialCount, float killListMs, float unused, int charCount)
 {
     // Lazy init
     if (!s_initialized && !s_createFailed)
@@ -78,38 +78,32 @@ void PerfOverlay::Update(float totalMs, float charsMs, float charsUTMs, float sy
 
     // Update rolling average
     s_totalHistory[s_historyIdx] = totalMs;
-    s_charsHistory[s_historyIdx] = charsMs;
+    s_charsHistory[s_historyIdx] = spatialMs;
     s_historyIdx = (s_historyIdx + 1) % AVG_FRAMES;
 
-    float avgTotal = 0, avgChars = 0;
+    float avgTotal = 0, avgSpatial = 0;
     for (int i = 0; i < AVG_FRAMES; ++i)
     {
         avgTotal += s_totalHistory[i];
-        avgChars += s_charsHistory[i];
+        avgSpatial += s_charsHistory[i];
     }
     avgTotal /= AVG_FRAMES;
-    avgChars /= AVG_FRAMES;
+    avgSpatial /= AVG_FRAMES;
 
     float fps = (avgTotal > 0.001f) ? (1000.0f / avgTotal) : 0.0f;
-    float charsPct = (avgTotal > 0.001f) ? (avgChars / avgTotal * 100.0f) : 0.0f;
+    float spatialPct = (avgTotal > 0.001f) ? (avgSpatial / avgTotal * 100.0f) : 0.0f;
 
     char buf[512];
     sprintf(buf,
-        "KenshiPerfMod\n"
+        "KenshiPerfMod  [F12 hide]\n"
         "FPS: %.0f (%.1f ms)\n"
         "Characters: %d\n"
-        "charsUpdate: %.1f ms (%.0f%%)\n"
-        "charsUpdateUT: %.2f ms\n"
-        "sysMessages: %.2f ms\n"
-        "killList: %.2f ms\n"
-        "%s",
+        "Spatial queries: %.0f/frame %.2f ms (%.0f%%)\n"
+        "killList: %.3f ms",
         fps, avgTotal,
         charCount,
-        charsMs, charsPct,
-        charsUTMs,
-        sysMsgMs,
-        killListMs,
-        (dailyMs > 0.1f) ? "dailyUpdate: ACTIVE" : "");
+        spatialCount, spatialMs, spatialPct,
+        killListMs);
 
     s_overlayText->setCaption(buf);
 }
