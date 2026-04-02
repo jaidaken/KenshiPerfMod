@@ -14,8 +14,8 @@
 #include <Windows.h>
 
 // Plugin entry point - called by RE_Kenshi's plugin loader.
-// The mangled name ?startPlugin@@YAXXZ is resolved by GetProcAddress in Plugins.cpp.
-void startPlugin()
+// RE_Kenshi looks up the C++ mangled name ?startPlugin@@YAXXZ via GetProcAddress.
+__declspec(dllexport) void startPlugin()
 {
     DebugLog("[KenshiPerfMod] Starting KenshiPerfMod");
 
