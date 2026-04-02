@@ -8,6 +8,7 @@
 #include <Windows.h>
 
 #include <kenshi/GameWorld.h>
+#include <kenshi/Character.h>
 #include <kenshi/Globals.h>
 #include <core/Functions.h>
 #include <Debug.h>
@@ -55,6 +56,20 @@ static double TicksToMs(__int64 ticks)
 static void (*mainLoop_orig)(GameWorld*, float) = NULL;
 static void (*charsUpdate_orig)(GameWorld*) = NULL;
 static void (*charsUpdateUT_orig)(GameWorld*) = NULL;
+
+// Alternative: hook individual Character::update to measure total char update time
+static void (*charUpdate_orig)(Character*) = NULL;
+static __int64 s_charUpdateAccum = 0;
+static int s_charUpdateCount = 0;
+static void charUpdate_hook(Character* self)
+{
+    LARGE_INTEGER start, end;
+    QueryPerformanceCounter(&start);
+    charUpdate_orig(self);
+    QueryPerformanceCounter(&end);
+    s_charUpdateAccum += (end.QuadPart - start.QuadPart);
+    ++s_charUpdateCount;
+}
 static void (*processSysMessages_orig)(GameWorld*) = NULL;
 static void (*processKillList_orig)(GameWorld*, bool) = NULL;
 static void (*dailyUpdates_orig)(GameWorld*) = NULL;
@@ -67,6 +82,8 @@ static void mainLoop_hook(GameWorld* self, float time)
     s_current.frameStart = start.QuadPart;
     s_current.dailyUpdatesRan = false;
     // Reset sub-timings so stale values are obvious (show as 0)
+    s_charUpdateAccum = 0;
+    s_charUpdateCount = 0;
     s_current.charsUpdate_start = s_current.charsUpdate_end = start.QuadPart;
     s_current.charsUpdateUT_start = s_current.charsUpdateUT_end = start.QuadPart;
     s_current.processSysMessages_start = s_current.processSysMessages_end = start.QuadPart;
@@ -80,7 +97,8 @@ static void mainLoop_hook(GameWorld* self, float time)
 
     // Compute frame timings
     __int64 frameTotal = s_current.frameEnd - s_current.frameStart;
-    __int64 charsTotal = s_current.charsUpdate_end - s_current.charsUpdate_start;
+    // Use accumulated Character::update() time (charsUpdate hook doesn't fire - likely inlined)
+    __int64 charsTotal = s_charUpdateAccum;
     __int64 charsUTTotal = s_current.charsUpdateUT_end - s_current.charsUpdateUT_start;
     __int64 sysMsg = s_current.processSysMessages_end - s_current.processSysMessages_start;
     __int64 killList = s_current.processKillList_end - s_current.processKillList_start;
@@ -94,10 +112,8 @@ static void mainLoop_hook(GameWorld* self, float time)
     float killListMs = (float)TicksToMs(killList);
     float dailyMs = (float)TicksToMs(daily);
 
-    // Get character count
-    int charCount = 0;
-    if (ou && ou->initialized)
-        charCount = (int)ou->getCharacterUpdateList().size();
+    // Character count from our hook (more accurate than the update list size)
+    int charCount = s_charUpdateCount;
 
     // Write frame data to CSV
     if (s_csvFile.is_open())
@@ -338,6 +354,14 @@ void Profiling::InstallHooks()
     PerfLog::InfoF("Hook dailyUpdates: %s (addr=0x%llX)",
         status == KenshiLib::SUCCESS ? "OK" : "FAIL",
         KenshiLib::GetRealAddress(&GameWorld::dailyUpdates));
+
+    // Hook individual Character::update() - charsUpdate() appears to be inlined
+    status = KenshiLib::AddHook(
+        (void*)KenshiLib::GetRealAddress(&Character::_NV_update),
+        (void*)charUpdate_hook, (void**)&charUpdate_orig);
+    PerfLog::InfoF("Hook Character::update: %s (addr=0x%llX)",
+        status == KenshiLib::SUCCESS ? "OK" : "FAIL",
+        KenshiLib::GetRealAddress(&Character::_NV_update));
 
     DebugLog("[KenshiPerfMod] Profiling hooks installed");
 }
