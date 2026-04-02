@@ -137,9 +137,9 @@ jobs:
           if (-not $dll) { Write-Error "DLL not found"; exit 1 }
 
           Copy-Item $dll.FullName "$outDir\KenshiPerfMod.dll"
-          Copy-Item "KenshiPerfMod\mod-package\RE_Kenshi.json" "$outDir\"
-          Copy-Item "KenshiPerfMod\mod-package\KenshiPerfMod.json" "$outDir\"
-          Copy-Item "KenshiPerfMod\mod-package\KenshiPerfMod.mod" "$outDir\"
+          Copy-Item "mod-package\RE_Kenshi.json" "$outDir\"
+          Copy-Item "mod-package\KenshiPerfMod.json" "$outDir\"
+          Copy-Item "mod-package\KenshiPerfMod.mod" "$outDir\"
 
           Write-Host "Package contents:"
           Get-ChildItem $outDir
