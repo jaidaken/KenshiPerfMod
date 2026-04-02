@@ -115,11 +115,12 @@ jobs:
         env:
           BOOST_INCLUDE_PATH: C:\boost_1_60_0
         run: |
-          :: Set up VC++ 2010 and Windows 7.1 SDK environment then invoke VS2022 MSBuild
-          :: SetEnv.cmd sets up ALL the right paths for the v100 compiler
-          call "C:\Program Files\Microsoft SDKs\Windows\v7.1\Bin\SetEnv.cmd" /x64 /Release 2>nul
-          :: Restore VCTargetsPath that SetEnv.cmd clobbers (VS2022 MSBuild needs this)
-          set "VCTargetsPath=C:\Program Files (x86)\MSBuild\Microsoft.Cpp\v4.0\"
+          :: The Windows7.1SDK toolset needs VC++ 2010 CRT and SDK include/lib paths.
+          :: MSBuild's $(VC_IncludePath) and $(WindowsSDK_IncludePath) don't resolve for v100,
+          :: so we set INCLUDE and LIB env vars which CL.exe reads directly.
+          set "INCLUDE=C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\include;C:\Program Files\Microsoft SDKs\Windows\v7.1\Include;%INCLUDE%"
+          set "LIB=C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\lib\amd64;C:\Program Files\Microsoft SDKs\Windows\v7.1\Lib\x64;%LIB%"
+          set "PATH=C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin\x86_amd64;C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC\bin;C:\Program Files (x86)\Microsoft Visual Studio 10.0\Common7\IDE;%PATH%"
           "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe" KenshiPerfMod.vcxproj /p:Configuration=Release /p:Platform=x64 /m /v:normal
 
       # --- Package ---
