@@ -8,7 +8,6 @@
 #include <kenshi/GameWorld.h>
 #include <kenshi/Globals.h>
 #include <core/Functions.h>
-#include <core/RVA.h>
 #include <Debug.h>
 
 #include <fstream>
@@ -192,9 +191,11 @@ void Profiling::InstallHooks()
     if (!s_enabled)
         return;
 
-    // mainLoop_GPUSensitiveStuff is virtual - use RVAPtr to get the real address
-    RVAPtr<void> mainLoopAddr(0x7877A0);
-    KenshiLib::AddHook((void*)mainLoopAddr.GetPtr(), (void*)mainLoop_hook, (void**)&mainLoop_orig);
+    // mainLoop_GPUSensitiveStuff is virtual - GetRealAddress doesn't work for virtuals.
+    // Use the non-virtual _NV_ variant which has the same RVA but is a regular function.
+    KenshiLib::AddHook(
+        (void*)KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff),
+        (void*)mainLoop_hook, (void**)&mainLoop_orig);
 
     // These are all non-virtual, use GetRealAddress
     KenshiLib::AddHook(
